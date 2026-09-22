@@ -1,0 +1,57 @@
+# Abuse Cases (STRIDE)
+
+This document analyzes threats against the P2P LAN Screen Sharing application using the **STRIDE** framework: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege. Because the application has no central server, most threats originate from other peers or devices on the same LAN.
+
+```mermaid
+flowchart LR
+    S["Spoofing"] --> AC01["AC-01 Rogue Broadcaster<br/>Impersonation"]
+    S --> AC02["AC-02 Viewer<br/>Impersonation"]
+
+    T["Tampering"] --> AC03["AC-03 Stream<br/>Injection / Modification"]
+
+    R["Repudiation"] --> AC04["AC-04 Denial of<br/>Broadcast Activity"]
+
+    I["Information<br/>Disclosure"] --> AC05["AC-05 Passive<br/>Eavesdropping"]
+    I --> AC06["AC-06 Broadcaster<br/>List Enumeration"]
+
+    D["Denial of<br/>Service"] --> AC07["AC-07 UDP Flood on<br/>Stream Port"]
+    D --> AC08["AC-08 Fake mDNS<br/>Announcement Flood"]
+
+    E["Elevation of<br/>Privilege"] --> AC09["AC-09 Malformed Stream<br/>Decoder Exploit"]
+    E --> AC10["AC-10 Capture<br/>Permission Abuse"]
+```
+
+## Threat Catalog
+
+| ID | STRIDE | Abuse Case | Description | Affected Asset / Requirement | Suggested Mitigation |
+|----|--------|------------|--------------|-------------------------------|------------------------|
+| AC-01 | Spoofing | Rogue Broadcaster Impersonation | An attacker on the LAN announces a fake broadcaster via mDNS using a legitimate-looking name (or the same name as a real peer), tricking viewers into connecting to it and watching attacker-controlled content instead of the intended one. | FR-05 (Broadcaster Listing), FR-06 (Single-Stream Viewing) | Show a stable per-peer identity (e.g., a fingerprint derived from a long-lived key pair) alongside the display name; warn the user when a name reappears with a different fingerprint (TOFU trust model). |
+| AC-02 | Spoofing | Viewer Impersonation | An attacker impersonates an authorized viewer's network identity to receive a stream not intended for them, relevant if access control is added later (e.g., "only these peers may view"). | FR-09 (Concurrent Viewers per Broadcaster) | Per-connection authentication (signed connection request) instead of trusting source IP alone. |
+| AC-03 | Tampering | Stream Injection / Modification | Video travels as UDP packets; an on-path attacker (e.g., via ARP spoofing on the LAN) can intercept and modify encoded frames in transit, causing corrupted or misleading content to be rendered on the viewer's screen. | FR-10 (Stream Rendering), NFR-10 (Transport Confidentiality) | Authenticate and integrity-protect the wire format (e.g., AEAD cipher such as ChaCha20-Poly1305) so tampered packets are detected and dropped. |
+| AC-04 | Repudiation | Denial of Broadcast Activity | With no logging, a user who broadcasts inappropriate or unauthorized content on a shared network can deny having done so, and there is no way to attribute a given stream to a specific peer after the fact. | Accountability / incident response | Keep local session logs (start/stop timestamps, peer identity) on both broadcaster and viewer sides; do not require a central server for this. |
+| AC-05 | Information Disclosure | Passive Eavesdropping | Any device with access to the LAN (a compromised host, a poorly isolated Wi-Fi network) can passively capture unencrypted UDP traffic and reconstruct a broadcaster's video stream, exposing on-screen content to unintended parties. | NFR-10 (Transport Confidentiality) | Encrypt the video/control channel end-to-end (e.g., a Noise protocol handshake establishing a session key, then a symmetric stream cipher for frames). |
+| AC-06 | Information Disclosure | Broadcaster List Enumeration | A passive listener can enumerate all active broadcasters via mDNS traffic alone, learning who on the network is currently sharing their screen — itself a disclosure of presence/activity, even without watching any content. | FR-01 (Peer Discovery) | Allow a "discoverable" toggle so a peer can broadcast without announcing itself network-wide, accepting only connections from explicitly known peers. |
+| AC-07 | Denial of Service | UDP Flood on Stream Port | An attacker floods the UDP port used for video streaming (broadcaster or viewer side) with garbage packets, exhausting bandwidth or CPU and disrupting legitimate streaming. | NFR-01 (Latency), NFR-04 (Packet Loss Tolerance) | Validate and cheaply discard malformed packets before attempting any decode; apply per-source rate limiting. |
+| AC-08 | Denial of Service | Fake mDNS Announcement Flood | An attacker floods the network with a large number of fake broadcaster announcements, overwhelming the viewer's peer list UI and potentially causing resource exhaustion if the app probes/connects to each one. | FR-05 (Broadcaster Listing), NFR-09 (Responsive UI) | Cap the number of tracked peers, deduplicate/validate announcements, and back off on sources that repeatedly send invalid entries. |
+| AC-09 | Elevation of Privilege | Malformed Stream Decoder Exploit | An attacker who is or has hijacked a broadcaster role sends a deliberately malformed encoded video stream crafted to exploit a memory-safety bug in the decoder (e.g., a native H.264/H.265 decoding library), aiming for remote code execution on the viewer's machine. | FR-10 (Stream Rendering) | Prefer well-audited/memory-safe decoder bindings, isolate the decode step (separate process or sandbox), keep decoding libraries patched, and fuzz-test the decode path. |
+| AC-10 | Elevation of Privilege | Capture Permission Abuse | On platforms that require explicit screen-recording permission (notably macOS), a compromised or maliciously modified build of the app could capture more than the user selected (e.g., the whole desktop when only a window was chosen) if source selection is not strictly enforced at the OS API boundary. | FR-03 (Capture Source Selection) | Strictly enforce the user-selected capture source through the OS capture API itself (not by post-cropping a full-desktop capture), and clearly surface what is being captured in the UI at all times. |
+
+## Representative Attack Scenario (AC-01 + AC-03)
+
+The sequence below illustrates a rogue peer that both impersonates a legitimate broadcaster and tampers with the stream — showing why spoofing and tampering mitigations are complementary.
+
+```mermaid
+sequenceDiagram
+    actor V as Viewer
+    participant D as Discovery (mDNS)
+    participant M as Attacker (Rogue Peer)
+    participant B as Real Broadcaster
+
+    B->>D: Announce "Alice's Desktop"
+    M->>D: Announce "Alice's Desktop" (spoofed name)
+    D-->>V: List shows two entries with the same name
+    V->>M: Connect (unknowingly picks the rogue entry)
+    M-->>V: Accept connection
+    M->>V: Attacker-controlled / tampered video frames
+    Note over V: Without identity verification (AC-01)<br/>and integrity checks (AC-03),<br/>the viewer cannot detect the substitution.
+```
