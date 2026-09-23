@@ -9,6 +9,7 @@ mindmap
       Latency
       Frame rate
       Resource efficiency
+      Audio/video sync
     Reliability
       Packet loss tolerance
       Fault isolation
@@ -29,9 +30,10 @@ mindmap
 
 | ID | Requirement | Description |
 |----|-------------|-------------|
-| NFR-01 | Latency | End-to-end (capture-to-display) latency should stay under approximately 150 ms on a typical wired/Wi-Fi LAN. |
+| NFR-01 | Latency | End-to-end (capture-to-display) latency should stay under approximately 150 ms on a typical wired/Wi-Fi LAN. This applies to audio (capture-to-playback) as well as video. |
 | NFR-02 | Frame Rate | The system should sustain at least 30 FPS at 1080p on typical consumer hardware from the last ~5 years. |
 | NFR-03 | Resource Efficiency | The application should use hardware-accelerated encode/decode (e.g., NVENC, Quick Sync, VideoToolbox, VAAPI) when available, to minimize CPU load during capture, encoding, and decoding. |
+| NFR-13 | Audio/Video Synchronization | When audio is shared, it should play within about 45 ms before to 125 ms after the matching video (the detectability thresholds of ITU-R BT.1359). Sync is achieved by delaying audio, never by delaying video. |
 
 ## Reliability
 
