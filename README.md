@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="assets/icon.png" alt="Peeroxide logo: a rusty pixel-art pier linking screens" width="160">
+  <br>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2024_edition-orange?logo=rust&amp;logoColor=white" alt="Rust 2024 edition"></a>
+</p>
+
 # Peeroxide
 
 Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the LAN can broadcast a monitor or a single window, several people can broadcast at the same time, and each viewer watches one stream at a time. There is no server: peers find each other with mDNS and stream directly over encrypted QUIC.
