@@ -7,6 +7,7 @@ mod contacts;
 mod controller;
 mod decoder;
 mod encoder;
+mod launcher;
 mod settings;
 mod stats;
 mod ui;
@@ -45,6 +46,15 @@ pub struct Args {
     /// Name shown to other peers (defaults to this computer's name).
     #[arg(long)]
     pub name: Option<String>,
+
+    /// Don't check for updates at start (also: environment variable PEEROXIDE_NO_UPDATE=1).
+    #[arg(long)]
+    pub no_update: bool,
+
+    /// Set by the updater when it restarts the app: shows "Updated to VERSION" and skips the
+    /// check once.
+    #[arg(long, hide = true, value_name = "VERSION")]
+    pub just_updated: Option<String>,
 }
 
 fn parse_profile(s: &str) -> Result<String, String> {
@@ -181,15 +191,17 @@ fn main() -> eframe::Result {
         &title,
         options,
         Box::new(move |cc| {
-            let app = ui::App::new(
+            let start = launcher::Start {
                 args,
                 identity,
                 display_name,
                 settings,
                 dir,
+            };
+            Ok(Box::new(launcher::Launcher::new(
+                start,
                 cc.egui_ctx.clone(),
-            )?;
-            Ok(Box::new(app))
+            )?))
         }),
     )
 }
