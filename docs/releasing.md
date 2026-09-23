@@ -12,6 +12,8 @@ The app only installs updates signed with the project's release key (NFR-15, AC-
 2. Commit `crates/update/release-key.pub`. Every build made from then on trusts this key. Until this file holds a key, builds don't update at all.
 3. Back up the secret key file **and** its password somewhere safe, such as a password manager or an encrypted USB stick. Never commit it (`*.key` is in `.gitignore`), never upload it, never paste it anywhere.
 
+The current release key has the ID `1FAB31191B660C70`.
+
 **If the key is lost:** installed copies only trust the old key, so they will refuse everything signed with a new one. Create a new key with `cargo run --release -p peeroxide-update --example release-sign -- keygen --force`, commit the new public key, release, and ask testers to download that release by hand once. After that, updates work again.
 
 **If the key leaks:** do the same immediately, and tell testers not to trust updates until they have installed the new version by hand.

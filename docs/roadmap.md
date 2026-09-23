@@ -60,7 +60,7 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 
 Goal: a solid Windows build that is pleasant to watch, and that keeps itself up to date.
 
-- **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. Before releasing: `just release-keygen` once, and commit the public key (see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
+- **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.

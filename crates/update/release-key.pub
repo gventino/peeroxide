@@ -1,2 +1,2 @@
-# No release key yet. Run `just release-keygen` once to create the signing key; it replaces
-# this file with the public key. Until then the app can't verify updates, so it never installs any.
+untrusted comment: minisign public key: 1FAB31191B660C70
+RWRwDGYbGTGrH8o8NCqp7pCVvNKbhea49Hx5rUiDNIyRyMFlNr2JRA3h

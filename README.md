@@ -216,6 +216,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - [x] Two machines on the LAN with audio.
 - [ ] Audio over Radmin VPN with the **Internet / VPN** preset.
 - [x] Self-update on one PC with a throwaway key and a local server: 0.4.99 updated itself to 0.5.0 in about 2 s and restarted showing "Updated to 0.5.0"; started again, it found nothing newer; a tampered package was rejected and the app opened on its old version; with no server it opened in about 2 s.
+- [x] A release build with the real key checks GitHub itself over HTTPS (Windows certificate store) and reports "up to date" in about 0.4 s.
 - [ ] Self-update by hand: Skip, a read-only folder, two profiles starting at once, and a real update through GitHub (the release after the first one with the updater).
 - [ ] macOS and Linux (see below).
 
