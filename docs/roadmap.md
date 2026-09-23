@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Peeroxide stands after **0.3.0 (pre-alpha)**, and what comes next. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.3.0 (pre-alpha)**, and what comes next. Audio (0.6) was built ahead of 0.4 and 0.5; see its section. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
@@ -37,6 +37,7 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 🗑 (forget contact) icon rendering correctly.
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
+- Audio, by ear: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); two machines on the LAN and over Radmin VPN. Checked so far: the whole pipeline on one machine with the output muted (A/V offset about +64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
 ## 0.4 — Fixes and a better viewer
 
@@ -58,17 +59,23 @@ Goal: the broadcaster decides who watches. Today anyone who can reach you on the
 - **Approve / deny** new viewers with a prompt ("Bob (FD7C-A21D) wants to watch"), with "always allow" remembered per ID.
 - **Optional password** for a broadcast.
 - Viewers authenticate with their own identity (mutual TLS using the certificate every peer already has), so the ID the broadcaster sees can't be faked.
-- Protocol change: viewers wait for approval before video starts. Bump the protocol version and keep the "incompatible version" message clear.
+- Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 3; audio already took 2) and keep the "incompatible version" message clear.
+- The approval and access controls cover audio too: today anyone who can watch a broadcast also hears it (AC-11).
 
-## 0.6 — Audio (FR-14)
+## 0.6 — Audio (FR-14 to FR-16) · built
 
-Goal: hear what the broadcaster hears.
+Goal: hear what the broadcaster hears. Built ahead of 0.4/0.5; needs the by-ear checks listed under "Built but not yet verified by hand".
 
-- **Desktop audio** on Windows through WASAPI loopback.
-- **Audio of just the shared window**: Windows 10 2004+ can capture a single process's audio.
-- Compressed with Opus, sent on its own QUIC stream, and kept in sync with video using the capture timestamps already sent with each frame.
-- Viewer controls: volume and mute. Broadcaster control: "share audio" on/off.
-- Watch the build requirements: Opus bindings usually need CMake. Prefer a crate that builds with only a C compiler, like everything else so far.
+- ✅ **Desktop audio** on Windows through process loopback, excluding Peeroxide's own playback, so a peer that broadcasts and watches at once never feeds a stream back.
+- ✅ **Audio of just the shared window**: the window's process tree only (Windows 10 2004+).
+- ✅ Opus via the pure-Rust `opus-rs` (no CMake, no C). Sent on its own QUIC stream ahead of video. Kept in sync by delaying audio to match the video, using the capture timestamps both streams carry.
+- ✅ Viewer: volume and mute, remembered. Broadcaster: "Share audio", off by default, chosen before starting, and stating exactly what it captures.
+- ✅ Protocol version 2. 0.3 peers get "incompatible version".
+- Known gaps:
+  - Windows Store (UWP) windows share no sound: their window belongs to `ApplicationFrameHost.exe`, not the app. Detect that and say so, or look up the app's real process.
+  - No mute while live. The user chose to fix the choice for a broadcast; revisit if needed (AC-11).
+  - Audio plays about 60 ms after the video when the video path is very fast (test pattern). That is within NFR-13, but could shrink with 10 ms Opus frames or an adaptive jitter margin.
+  - Audio packets travel on a reliable stream. Over lossy internet links, QUIC datagrams with Opus loss concealment would avoid retransmission stalls.
 
 ## 0.7 — macOS and Linux
 
