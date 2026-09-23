@@ -181,10 +181,15 @@ fn main() -> eframe::Result {
         Some(p) => format!("{APP_NAME} — {p}"),
         None => APP_NAME.into(),
     };
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title(&title)
+        .with_inner_size([1280.0, 800.0]);
+    match eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(e) => tracing::warn!("could not load the window icon: {e}"),
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(&title)
-            .with_inner_size([1280.0, 800.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
