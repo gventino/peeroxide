@@ -54,7 +54,7 @@ release:
 # Release build zipped with the quickstart into dist/, e.g. `just package` or `just package audio-preview`
 [windows]
 package label="": release
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/package-windows.ps1 -Label '{{ label }}'
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/package-windows.ps1 {{ if label == "" { "" } else { "-Label " + label } }}
 
 # Record an audio source to audio-probe.wav: `just probe-audio`, `just probe-audio tone 5`, `just probe-audio <PID> --play`
 probe-audio *args:
