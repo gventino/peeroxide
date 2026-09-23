@@ -1,12 +1,12 @@
 # Roadmap
 
-Where Peeroxide stands after **0.3.0 (pre-alpha)**, and what comes next. Audio (0.6) was built ahead of 0.4 and 0.5; see its section. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.4.0 (pre-alpha)**, and what comes next. Audio, first planned as 0.6, shipped in 0.4.0, so the fixes and privacy milestones each moved up one number. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
-    B["Known bugs"] --> V04["0.4<br/>Fixes + better viewer"]
-    V04 --> V05["0.5<br/>Privacy controls"]
-    V05 --> V06["0.6<br/>Audio"]
+    V04["0.4 ✓<br/>Audio"] --> B["Known bugs"]
+    B --> V05["0.5<br/>Fixes + better viewer"]
+    V05 --> V06["0.6<br/>Privacy controls"]
     V06 --> V07["0.7<br/>macOS + Linux"]
     V07 --> V08["0.8<br/>Distribution"]
     V08 --> V10["1.0<br/>Stable"]
@@ -38,34 +38,11 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
-- Audio, by ear: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); two machines on the LAN and over Radmin VPN. Checked so far: the whole pipeline on one machine with the output muted (A/V offset about +64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
+- Audio, item by item: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); a session over Radmin VPN. Checked so far: audio between two PCs on a LAN (by hand, before the 0.4.0 release), the whole pipeline on one machine (A/V offset about +55–64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
-## 0.4 — Fixes and a better viewer
+## 0.4 — Audio (FR-14 to FR-16) · released
 
-Goal: a solid Windows build that is pleasant to watch.
-
-- All known bugs above fixed, and CI green on Windows.
-- **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
-- **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
-- **Pop-out window**: watch the stream in its own window while the controls stay in the main one.
-- **Toggle the stats overlay**, off by default for normal users.
-- Show the broadcaster's name and ID on the video while watching.
-
-## 0.5 — Privacy controls (AC-02)
-
-Goal: the broadcaster decides who watches. Today anyone who can reach you on the network can watch while you broadcast.
-
-- **See who is watching**: names and IDs of connected viewers, live, in the broadcast panel.
-- **Kick** a viewer.
-- **Approve / deny** new viewers with a prompt ("Bob (FD7C-A21D) wants to watch"), with "always allow" remembered per ID.
-- **Optional password** for a broadcast.
-- Viewers authenticate with their own identity (mutual TLS using the certificate every peer already has), so the ID the broadcaster sees can't be faked.
-- Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 3; audio already took 2) and keep the "incompatible version" message clear.
-- The approval and access controls cover audio too: today anyone who can watch a broadcast also hears it (AC-11).
-
-## 0.6 — Audio (FR-14 to FR-16) · built
-
-Goal: hear what the broadcaster hears. Built ahead of 0.4/0.5; needs the by-ear checks listed under "Built but not yet verified by hand".
+Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and privacy work first planned before it. Tested between PCs on a LAN; the remaining checks are listed under "Built but not yet verified by hand".
 
 - ✅ **Desktop audio** on Windows through process loopback, excluding Peeroxide's own playback, so a peer that broadcasts and watches at once never feeds a stream back.
 - ✅ **Audio of just the shared window**: the window's process tree only (Windows 10 2004+).
@@ -78,6 +55,29 @@ Goal: hear what the broadcaster hears. Built ahead of 0.4/0.5; needs the by-ear 
   - Audio plays about 60 ms after the video when the video path is very fast (test pattern). That is within NFR-13, but could shrink with 10 ms Opus frames or an adaptive jitter margin.
   - Audio packets travel on a reliable stream. Over lossy internet links, QUIC datagrams with Opus loss concealment would avoid retransmission stalls.
 
+## 0.5 — Fixes and a better viewer
+
+Goal: a solid Windows build that is pleasant to watch.
+
+- All known bugs above fixed, and CI green on Windows.
+- **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
+- **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
+- **Pop-out window**: watch the stream in its own window while the controls stay in the main one.
+- **Toggle the stats overlay**, off by default for normal users.
+- Show the broadcaster's name and ID on the video while watching.
+
+## 0.6 — Privacy controls (AC-02)
+
+Goal: the broadcaster decides who watches. Today anyone who can reach you on the network can watch while you broadcast.
+
+- **See who is watching**: names and IDs of connected viewers, live, in the broadcast panel.
+- **Kick** a viewer.
+- **Approve / deny** new viewers with a prompt ("Bob (FD7C-A21D) wants to watch"), with "always allow" remembered per ID.
+- **Optional password** for a broadcast.
+- Viewers authenticate with their own identity (mutual TLS using the certificate every peer already has), so the ID the broadcaster sees can't be faked.
+- Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 3; audio already took 2) and keep the "incompatible version" message clear.
+- The approval and access controls cover audio too: today anyone who can watch a broadcast also hears it (AC-11).
+
 ## 0.7 — macOS and Linux
 
 Goal: the same features on all three platforms, tested on real machines. Targets: Windows 10 and 11, macOS, and Linux on both X11 and Wayland.
@@ -87,7 +87,7 @@ Goal: the same features on all three platforms, tested on real machines. Targets
 - **Linux**: run the PipeWire / xdg-desktop-portal path on Wayland (GNOME and KDE), and support X11 too (decided: both are targets). `scap` 0.0.8 only captures through the portal, so X11 needs its own capture path or a different library.
   - Known risk: the `scap` 0.0.8 Linux backend asks PipeWire for RGBA but panics if it actually receives it. Patch or replace it before calling Linux supported.
 - Cross-platform interoperability (FR-13): Windows ↔ macOS ↔ Linux sessions verified.
-- **Audio capture** (0.6 capture is Windows-only; playback and everything else already builds for all three):
+- **Audio capture** (0.4 capture is Windows-only; playback and everything else already builds for all three):
   - **macOS**: ScreenCaptureKit audio through the `screencapturekit` crate `scap` already pulls in. It has `captures_audio` and `excludes_current_process_audio`, and returns PCM buffers. Needs macOS 13+; macOS 12.3–12.x keeps video only, with a note. Uses the same Screen Recording permission. To verify on a real Mac: a window share gets only that window's app's sound.
   - **Linux**: audio is the same on X11 and Wayland; it depends on the sound server. Decide between:
     - PipeWire natively: already a dependency. Per-app capture and "everything except Peeroxide" by linking app streams. Doesn't reach systems where PulseAudio plays the sound (e.g. Ubuntu 22.04 LTS).

@@ -3279,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cpal",
  "rtrb",
@@ -3315,7 +3315,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-capture"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "scap",
  "thiserror 2.0.20",
@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-codec"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "fast_image_resize",
  "openh264",
@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-discovery"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "mdns-sd",
  "thiserror 2.0.20",
@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "postcard",
