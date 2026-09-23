@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 fast_image_resize = "6"
 openh264 = "0.9"
+opus-rs = "0.1.34"
 thiserror = "2.0.20"
 
 [lints]

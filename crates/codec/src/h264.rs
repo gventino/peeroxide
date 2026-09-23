@@ -176,6 +176,7 @@ mod tests {
             max_height: H,
             fps: 30,
             bitrate_bps: 2_000_000,
+            audio_bitrate_bps: 64_000,
         })
         .unwrap()
     }

@@ -1,10 +1,13 @@
-//! Video pipeline pieces: fixed-size canvas (scale + letterbox) and H.264 encode/decode.
+//! Media pipeline pieces: fixed-size canvas (scale + letterbox), H.264 encode/decode, and Opus
+//! audio encode/decode.
 
 mod canvas;
 mod h264;
+pub mod opus;
 
 pub use canvas::{Canvas, FitRect, canvas_size, fit_rect};
 pub use h264::{H264Decoder, H264Encoder};
+pub use opus::{OpusDecoder, OpusEncoder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preset {
@@ -13,6 +16,8 @@ pub struct Preset {
     pub max_height: u32,
     pub fps: u32,
     pub bitrate_bps: u32,
+    /// Opus bitrate when the broadcast shares audio.
+    pub audio_bitrate_bps: u32,
 }
 
 impl Preset {
@@ -22,6 +27,7 @@ impl Preset {
         max_height: 720,
         fps: 30,
         bitrate_bps: 4_000_000,
+        audio_bitrate_bps: 128_000,
     };
     pub const P1080: Self = Self {
         name: "1080p · 30 fps",
@@ -29,6 +35,7 @@ impl Preset {
         max_height: 1080,
         fps: 30,
         bitrate_bps: 8_000_000,
+        audio_bitrate_bps: 128_000,
     };
     /// For links with limited upload, such as a virtual LAN over the internet. Rate control
     /// raises the quantizer to stay near the budget; frames are never dropped, because a
@@ -39,6 +46,7 @@ impl Preset {
         max_height: 720,
         fps: 20,
         bitrate_bps: 2_000_000,
+        audio_bitrate_bps: 64_000,
     };
     pub const ALL: [Self; 3] = [Self::P720, Self::P1080, Self::INTERNET];
 }
@@ -89,4 +97,14 @@ pub trait VideoEncoder: Send {
 pub trait VideoDecoder: Send {
     /// Decodes one Annex-B access unit. Returns `None` if no picture is ready yet.
     fn decode(&mut self, data: &[u8]) -> Result<Option<DecodedFrame>, CodecError>;
+}
+
+/// Encodes one 20 ms frame of 48 kHz interleaved stereo audio ([`opus::FRAME_LEN`] samples).
+pub trait AudioEncoder: Send {
+    fn encode(&mut self, pcm: &[f32]) -> Result<Vec<u8>, CodecError>;
+}
+
+/// Decodes one packet into a 20 ms frame of 48 kHz interleaved stereo audio.
+pub trait AudioDecoder: Send {
+    fn decode(&mut self, packet: &[u8]) -> Result<Vec<f32>, CodecError>;
 }
