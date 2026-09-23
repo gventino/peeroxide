@@ -13,6 +13,7 @@ mindmap
     Reliability
       Packet loss tolerance
       Fault isolation
+      Fail-open updates
     Portability
       Single codebase
       Self-contained binaries
@@ -22,6 +23,7 @@ mindmap
     Security
       Transport confidentiality
       Peer authenticity
+      Update authenticity
     Maintainability
       Modular architecture
 ```
@@ -41,6 +43,7 @@ mindmap
 |----|-------------|-------------|
 | NFR-04 | Packet Loss Tolerance | The video pipeline should degrade gracefully (minor visual artifacts, momentary freeze) rather than crash or hang when UDP packet loss occurs. |
 | NFR-05 | Fault Isolation | A failure or crash in one broadcaster/viewer session should not affect other unrelated sessions running on the same peer. |
+| NFR-14 | Fail-Open Updates | Checking for and installing updates must never keep the user from the installed version: when offline or on any error, startup continues within about 5 seconds, and a failed update leaves the current version intact and working. |
 
 ## Portability
 
@@ -62,6 +65,7 @@ mindmap
 |----|-------------|-------------|
 | NFR-10 | Transport Confidentiality | Video and control traffic should be protected against passive eavesdropping by other devices on the LAN (see `abuse-cases.md`, Information Disclosure). |
 | NFR-11 | Peer Authenticity | The system should provide a way for a viewer to verify that a broadcaster's advertised identity has not been spoofed (see `abuse-cases.md`, Spoofing). |
+| NFR-15 | Update Authenticity | The application shall only install updates that carry a valid signature from the project's release key (kept offline, never in the repository or on GitHub) and that are strictly newer than the running version (see `abuse-cases.md`, AC-12). |
 
 ## Maintainability
 

@@ -53,10 +53,12 @@ Each broadcaster streams independently to whichever viewers are currently connec
 | FR-14 | Audio Sharing | A broadcaster shall be able to share the audio of the captured source alongside the video: only the shared application's sound for a window, or the computer's sound output (excluding Peeroxide's own playback) for a full desktop. The microphone is never captured. Viewers hear the audio in sync with the video. | Medium |
 | FR-15 | Broadcast Without Audio | Sharing audio shall be optional and off by default. The broadcaster chooses before starting a broadcast, the choice is remembered, and viewers are told when a broadcast has no audio. | Medium |
 | FR-16 | Viewer Volume Control | A viewer shall be able to change the playback volume of the stream (0–100%) and mute it. The setting only affects that viewer and is remembered across sessions. | Medium |
+| FR-17 | Automatic Updates | Every time it starts, the application shall check for a newer released version and, if one exists, download, verify, install it and restart, with visible progress and an option to skip. Without a newer version, or on any failure, it opens normally on the current version. | High |
 
 ## Traceability Notes
 
 - FR-06 and FR-07 are the core simplification constraint of this app: the UI and network layer never need to composite or decode more than one incoming stream at a time on the viewer side.
 - FR-08 and FR-09 mean the architecture must treat "broadcaster" and "viewer" as roles a peer can hold independently and simultaneously (a peer could, in principle, broadcast and view at the same time).
 - FR-14 to FR-16: audio is an optional companion to the video, never a dependency. A broadcast or a viewing session must keep working video-only when audio is off, unsupported, or failing (see NFR-05).
+- FR-17 matters because every release so far is incompatible with the previous one (FR-13 only holds between peers on the same version): automatic updates keep a group of peers on the same version. See UC-09, NFR-14, NFR-15 and AC-12.
 - Current status of FR-14: audio capture exists for Windows (10 2004+ and 11) only. macOS and Linux broadcasters can't share audio yet (planned for 0.7, see the roadmap), but viewers on any platform can play audio from a Windows broadcaster, which keeps FR-13 intact.
