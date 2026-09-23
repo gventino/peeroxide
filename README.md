@@ -9,8 +9,13 @@ Design documents: [functional requirements](functional-requirements.md) · [non-
 ## Using it
 
 1. **Broadcast:** pick a source (a monitor, a window, or the built-in test pattern) and a quality preset, then press **Start broadcasting**. Capture and encoding only run while at least one person is watching.
+   - Presets: **1080p · 30 fps** (~8 Mbps), **720p · 30 fps** (~4 Mbps), and **Internet / VPN · 720p · 20 fps** (~2 Mbps) for Radmin VPN, Hamachi and other links with limited upload.
+   - Each broadcast reuses the same UDP port, so a connect string you shared keeps working.
 2. **Watch:** broadcasters on your network appear under **Broadcasting on this network**. Click one to watch it; click another to switch. You only ever watch one stream at a time.
-3. **Check who you are watching:** every peer has an ID such as `7268-E22A`, shown next to its name. It is derived from that peer's certificate, and the connection is refused if the broadcaster can't prove it owns that ID. If two broadcasters share a name, a ⚠ appears; ask the person you expect for their ID (shown in the top bar of their app).
+3. **Saved:** everyone you have watched is remembered (★). When they aren't showing up in the list, e.g. discovery doesn't reach them, they appear under **Saved**. Click to connect at their last address, or 🗑 to forget them.
+4. **Check who you are watching:** every peer has an ID such as `7268-E22A`, shown next to its name. It is derived from that peer's certificate, and the connection is refused if the broadcaster can't prove it owns that ID.
+   - If two broadcasters share a name, a ⚠ appears; ask the person you expect for their ID (shown in the top bar of their app).
+   - A red ⚠ means someone is using the name of a saved contact with a *different* ID: a reinstall, or an impersonation attempt.
 
 Your display name can be changed with the ✏ button next to it (not while broadcasting). Name and quality preset are remembered.
 
@@ -52,9 +57,9 @@ p2pss --profile b --name Bob --watch alice
 ### Network requirements
 
 - Peers must be on the same subnet (mDNS does not cross routers). Discovery uses UDP port 5353 (multicast); video uses one random UDP port per broadcaster.
-- Virtual LANs such as Hamachi or Radmin VPN work like a LAN: the broadcaster is reachable on the adapter's address (25.x / 26.x). Whether discovery works depends on the VPN forwarding multicast. When it doesn't, use the connect string. Over the internet, prefer the 720p preset.
+- Virtual LANs such as Hamachi or Radmin VPN work like a LAN: the broadcaster is reachable on the adapter's address (25.x / 26.x). Whether discovery works depends on the VPN forwarding multicast. When it doesn't, use the connect string once; the broadcaster is saved from then on. Over the internet, use the **Internet / VPN** preset.
 - **Windows firewall:** the first run triggers a Windows Defender Firewall prompt. Allow the app on every network type you will use. Virtual LAN adapters (and many home networks) are classified *Public*, so tick **Public** too; otherwise discovery and incoming connections are blocked.
-- If discovery is blocked (e.g. guest Wi-Fi with client isolation, some VPNs), the broadcaster uses **Copy connect string ▾**, picks the network adapter the viewer shares with them, and the viewer pastes the string into **Connect manually**.
+- If discovery is blocked (e.g. guest Wi-Fi with client isolation, some VPNs), the broadcaster uses **Copy connect string**, picks the network adapter the viewer shares with them, and the viewer pastes the string into **Connect manually**.
 
 ### Distributing a Windows build
 
@@ -86,7 +91,7 @@ Mapping to [abuse-cases.md](abuse-cases.md):
 
 | Abuse case | MVP mitigation |
 |---|---|
-| AC-01 Rogue broadcaster impersonation | Each peer's ID is the SHA-256 of its long-lived certificate. The viewer pins the fingerprint from the announcement and aborts the TLS handshake on mismatch ("Identity check failed"). Duplicate names are flagged in the UI. |
+| AC-01 Rogue broadcaster impersonation | Each peer's ID is the SHA-256 of its long-lived certificate. The viewer pins the fingerprint from the announcement and aborts the TLS handshake on mismatch ("Identity check failed"). Duplicate names are flagged in the UI, and a saved contact's name showing up with a different ID is flagged as a possible impersonation (trust on first use). |
 | AC-03 Stream tampering · AC-05 Eavesdropping | All traffic is QUIC with TLS 1.3 (AEAD); tampered packets are dropped and nothing is sent in the clear. |
 | AC-04 Repudiation | Daily-rotated session logs record broadcasts, viewers (name and address), watch sessions and end reasons. |
 | AC-06 Enumeration | Peers are only announced while broadcasting. |
@@ -120,15 +125,16 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux. It hasn't run yet because the repository is local only; it's the quickest way to compile-check the macOS/Linux code once the repo is hosted.
 
-Automated tests (48) cover:
+Automated tests (59) cover:
 - the wire protocol, including malformed and oversized input;
 - identity persistence and fingerprint rejection;
-- real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch, lagging viewers, switching, unreachable peers;
+- real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch, lagging viewers, switching, unreachable peers, which address answered;
 - announcement validation and the peer-table cap, plus a real mDNS round trip;
+- saved contacts (merge, cap, corrupt files, ID-change detection) and the sticky broadcast port;
 - the viewer state machine against the use-case diagram;
-- H.264 round trips and canvas letterboxing.
+- H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
 
-Developer tools: `cargo run --release -p p2pss-capture --example probe` (list sources, measure capture rate) and `cargo run --release -p p2pss-codec --example bench [source|test|scroll] [seconds] [720|1080]`.
+Developer tools: `cargo run --release -p p2pss-capture --example probe` (list sources, measure capture rate) and `cargo run --release -p p2pss-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]`.
 
 ### Manual checklist
 
@@ -136,9 +142,11 @@ Developer tools: `cargo run --release -p p2pss-capture --example probe` (list so
 - [x] A shares a window; resizing letterboxes it, minimizing holds the last frame, closing it shows "The shared window was closed" on B.
 - [x] B leaves → A pauses capture.
 - [x] A is killed → B returns to the list (~6 s); A closed normally → B is told immediately and A disappears from the list.
-- [ ] Switching between two broadcasters by clicking in the list (covered by automated tests; click it once by hand).
+- [x] Two different machines over Radmin VPN, with discovery and pasted connect strings.
+- [x] Connecting once by connect string saves the broadcaster; they keep the same port after a restart; a different identity using their name is flagged.
+- [ ] Reconnecting from **Saved** by clicking, and switching broadcasters by clicking (both covered by automated tests; click once by hand).
 - [ ] Renaming yourself with ✏ persists across restarts.
-- [ ] Two different machines on the same LAN (firewall prompt, Private network profile).
+- [ ] A session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - [ ] macOS and Linux (see below).
 
 ## Known limitations
@@ -155,5 +163,6 @@ Developer tools: `cargo run --release -p p2pss-capture --example probe` (list so
 In the platform's application-data directory; on Windows, `%APPDATA%\P2P Screen Share\data`. `--profile x` uses `profiles\x` inside it. The path is printed on startup (`starting … dir=…`).
 
 - `identity.cert.der`, `identity.key.der`: this peer's identity. Deleting them creates a new ID.
-- `settings.toml`: display name and quality preset.
+- `settings.toml`: display name, quality preset and broadcast port.
+- `contacts.toml`: saved broadcasters (ID, name, last working addresses).
 - `logs/session.log.YYYY-MM-DD`: session log.

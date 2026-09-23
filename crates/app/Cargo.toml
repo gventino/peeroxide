@@ -13,10 +13,10 @@ directories = "6.0.0"
 eframe = "0.36.2"
 gethostname = "1.1.0"
 if-addrs = "0.15"
-p2pss-capture = { version = "0.1.0", path = "../capture" }
-p2pss-codec = { version = "0.1.0", path = "../codec" }
-p2pss-discovery = { version = "0.1.0", path = "../discovery" }
-p2pss-net = { version = "0.1.0", path = "../net" }
+p2pss-capture = { path = "../capture" }
+p2pss-codec = { path = "../codec" }
+p2pss-discovery = { path = "../discovery" }
+p2pss-net = { path = "../net" }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 toml = "1.1.6"

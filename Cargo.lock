@@ -3103,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "p2pss"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3127,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "p2pss-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "scap",
  "thiserror 2.0.20",
@@ -3136,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "p2pss-codec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fast_image_resize",
  "openh264",
@@ -3146,7 +3146,7 @@ dependencies = [
 
 [[package]]
 name = "p2pss-discovery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mdns-sd",
  "thiserror 2.0.20",
@@ -3155,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "p2pss-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "postcard",
