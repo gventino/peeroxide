@@ -38,8 +38,26 @@ $text = $text -replace "`r?`n", "`r`n"
 
 Compress-Archive -Path $dir -DestinationPath $zip
 
+# Sign the zip for the in-app updater (docs/releasing.md). Required for releases; optional for
+# labelled test builds, which the updater never installs anyway.
+$sig = "$zip.minisig"
+if (Test-Path $sig) { Remove-Item -Force $sig }
+$keyPath = if ($env:PEEROXIDE_RELEASE_KEY) { $env:PEEROXIDE_RELEASE_KEY } else { Join-Path $env:USERPROFILE ".peeroxide\release.key" }
+if ((Test-Path $keyPath) -or -not $Label) {
+    Push-Location $root
+    try {
+        cargo run -q --release -p peeroxide-update --example release-sign -- sign $zip
+        if ($LASTEXITCODE -ne 0) { throw "Signing failed; the release is not ready (see docs/releasing.md)." }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Write-Warning "No signing key at $keyPath, so this test build is unsigned."
+}
+
 $hash = (Get-FileHash (Join-Path $dir "peeroxide.exe") -Algorithm SHA256).Hash.Substring(0, 16)
 $size = "{0:N1} MB" -f ((Get-Item $zip).Length / 1MB)
 Write-Host "Packaged $name (commit $commit)"
 Write-Host "  $zip ($size)"
+if (Test-Path $sig) { Write-Host "  $sig" }
 Write-Host "  peeroxide.exe SHA-256 starts with $hash (compare on each PC to be sure it's the same build)"
