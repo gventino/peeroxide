@@ -5,6 +5,7 @@ Actors:
 - **Broadcaster** — a user sharing their screen.
 - **Viewer** — a user watching another peer's screen.
 - **Discovery Service** — the mDNS-based mechanism peers use to find each other on the LAN (not a separate server; it runs as part of every peer).
+- **Update Service** — GitHub Releases, where signed new versions of the app are published. The app only reads from it.
 
 Any peer can act as a Broadcaster, a Viewer, or both at the same time.
 
@@ -23,6 +24,8 @@ flowchart LR
     UC6["UC-06<br/>Handle Broadcaster Disconnection"]
     UC7["UC-07<br/>Broadcast With or Without Audio"]
     UC8["UC-08<br/>Adjust Stream Volume"]
+    UC9["UC-09<br/>Update on Start"]
+    User(["Any user"])
 
     Broadcaster --> UC2
     Broadcaster --> UC5
@@ -32,6 +35,7 @@ flowchart LR
     Viewer --> UC4
     Viewer --> UC6
     Viewer --> UC8
+    User --> UC9
 
     UC3 -.includes.-> UC1
     UC4 -.includes.-> UC3
@@ -205,3 +209,39 @@ flowchart TD
 - **Exceptions:**
   - If the broadcaster isn't sharing audio (UC-07 alternate flow), the volume controls are replaced by a "The broadcaster isn't sharing audio" note.
   - If the viewer has no audio output device, the UI says so; the video keeps playing.
+
+## UC-09 — Update on Start
+
+- **Actor:** Any user (system-triggered every time the app opens), with the Update Service.
+- **Preconditions:** The app was started from a writable folder. Updates are enabled: this is a release build, not started with `--no-update`, and not the first start right after an update.
+- **Main flow:**
+  1. Before anything else (no discovery, broadcast or viewing yet), the app shows "Checking for updates…" and asks the Update Service for its releases.
+  2. The newest release that is strictly newer than the running version and has a signed package for this platform is chosen.
+  3. The app downloads the package and its signature, showing progress.
+  4. It verifies the signature with the release public key built into the app. The signature must also name exactly this package, so an older signed package can't be passed off as the new one.
+  5. It replaces its own executable, in the same folder, with the new version.
+  6. It restarts itself with the same options, and the new version shows "Updated to X".
+- **Alternate flow — up to date:** No newer release exists; the app opens normally.
+- **Alternate flow — skip:** The user clicks **Skip** while checking or downloading; the app opens on the current version and tries again next time.
+- **Postconditions:** The user runs the newest verified version, or the same version as before. Never anything else.
+- **Exceptions (the app always opens on the current version):**
+  - offline, GitHub unreachable or rate-limited: startup continues after at most about 5 seconds;
+  - the signature is missing or invalid, or the package is malformed: nothing is installed, the failure is logged, and a note says the update failed;
+  - the folder isn't writable (e.g. Program Files): a note says a new version is available, with a link to download it;
+  - another instance is already updating: this one opens without updating.
+- **Business rule:** Updates are never downgrades and never unverified. The first version that contains the updater has to be installed by hand once.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Checking: app starts
+    Checking --> Open: up to date / offline / error / Skip
+    Checking --> Downloading: newer signed release found
+    Downloading --> Open: Skip / download failed
+    Downloading --> Verifying: done
+    Verifying --> Open: bad signature (note)
+    Verifying --> Installing: signature valid
+    Installing --> Open: folder not writable (note + link)
+    Installing --> Restarting: executable replaced
+    Restarting --> [*]: new version starts ("Updated to X")
+    Open --> [*]
+```

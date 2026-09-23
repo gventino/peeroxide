@@ -42,6 +42,16 @@ pub struct App {
     video: VideoView,
     autostart: bool,
     autowatch: Option<String>,
+    update_note: Option<UpdateNote>,
+}
+
+/// What the updater has to say in the top bar, e.g. "Updated to 0.5.0".
+#[derive(Clone, Debug)]
+pub struct UpdateNote {
+    pub text: String,
+    /// A page to download the update by hand.
+    pub link: Option<String>,
+    pub warn: bool,
 }
 
 impl App {
@@ -74,6 +84,7 @@ impl App {
             video: VideoView::default(),
             autostart: false,
             autowatch: args.watch.as_ref().map(|w| w.to_lowercase()),
+            update_note: None,
         };
         app.ctrl.output.set_volume(app.settings.volume());
         app.ctrl.output.set_muted(app.settings.muted);
@@ -98,6 +109,28 @@ impl App {
             }
         }
         Ok(app)
+    }
+
+    pub fn set_update_note(&mut self, note: UpdateNote) {
+        self.update_note = Some(note);
+    }
+
+    fn update_note_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(note) = &self.update_note else {
+            return;
+        };
+        ui.separator();
+        if note.warn {
+            ui.colored_label(ui.visuals().warn_fg_color, &note.text);
+        } else {
+            ui.weak(&note.text);
+        }
+        if let Some(link) = &note.link {
+            ui.hyperlink_to("Download", link);
+        }
+        if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+            self.update_note = None;
+        }
     }
 
     fn save_settings(&self) {
@@ -749,7 +782,10 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("identity").show(ui, |ui| {
-            ui.horizontal(|ui| self.identity_ui(ui));
+            ui.horizontal(|ui| {
+                self.identity_ui(ui);
+                self.update_note_ui(ui);
+            });
         });
 
         egui::Panel::left("controls")

@@ -51,10 +51,23 @@ check:
 release:
     cargo build --release -p peeroxide
 
-# Release build zipped with the quickstart into dist/, e.g. `just package` or `just package audio-preview`
+# Release build zipped with the quickstart and signed into dist/, e.g. `just package` or `just package test-label`
 [windows]
 package label="": release
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/package-windows.ps1 {{ if label == "" { "" } else { "-Label " + label } }}
+
+# One-time: create the release signing key (asks for a password) and build its public key into the app
+release-keygen:
+    cargo run -q --release -p peeroxide-update --example release-sign -- keygen
+
+# Publish the packaged release to GitHub (tag already pushed): `just publish notes.md [tag]`
+[windows]
+publish notes tag="":
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/publish-windows.ps1 -Notes '{{ notes }}' {{ if tag == "" { "" } else { "-Tag " + tag } }}
+
+# Serve a packaged release on this PC to test the self-update: `just serve-release dist/peeroxide-X.Y.Z-windows-x64.zip`
+serve-release zip port="8765":
+    cargo run -q --release -p peeroxide-update --example serve-release -- {{ zip }} {{ port }}
 
 # Record an audio source to audio-probe.wav: `just probe-audio`, `just probe-audio tone 5`, `just probe-audio <PID> --play`
 probe-audio *args:

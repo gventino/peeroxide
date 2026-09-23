@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="assets/icon.png" alt="Peeroxide logo: a rusty pixel-art pier linking screens" width="160">
+  <br>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2024_edition-orange?logo=rust&amp;logoColor=white" alt="Rust 2024 edition"></a>
+</p>
+
 # Peeroxide
 
 Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the LAN can broadcast a monitor or a single window, several people can broadcast at the same time, and each viewer watches one stream at a time. There is no server: peers find each other with mDNS and stream directly over encrypted QUIC.
@@ -8,7 +14,7 @@ Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. W
 
 Each release so far can't talk to the one before, so everyone needs to update together. 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
 
-Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md)
+Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md) · [releasing](docs/releasing.md)
 
 ## Using it
 
@@ -24,6 +30,21 @@ Design documents: [functional requirements](docs/functional-requirements.md) · 
    - A red ⚠ means someone is using the name of a saved contact with a *different* ID: a reinstall, or an impersonation attempt.
 
 Your display name can be changed with the ✏ button next to it (not while broadcasting). Name, quality preset, the audio choice, and volume/mute are remembered.
+
+## Updates
+
+Every time it opens, Peeroxide checks for a newer version, like Discord or Steam do. If there is one, it downloads it (with a progress bar and a **Skip** button to open right away instead), checks it, replaces itself in the same folder, and restarts. "Updated to X" then shows in the top bar.
+
+- **Only genuine updates are installed.** Each release is signed with a key that never leaves the maintainer's computer. The app checks that signature, and that the package is exactly the version it claims to be, before touching anything (AC-12). A package that fails the check is thrown away, and the app says so.
+- **It never gets in the way.** Offline, or GitHub unreachable: the app opens within about 5 seconds with a quiet note. Any error leaves the installed version as it was.
+- **Same folder, same permissions.** The firewall permission you gave keeps working after an update.
+- **A folder it can't write to** (such as Program Files): a note offers the download page instead.
+- **Only Windows packages are published for now.** On macOS and Linux the app just opens.
+- **To turn it off:** start with `--no-update`, or set the environment variable `PEEROXIDE_NO_UPDATE=1`. Development builds (`cargo run`) never update themselves.
+- **Privacy:** the check tells GitHub your IP address and the app version, nothing else (AC-13).
+- The first version with the updater has to be installed by hand once; later ones arrive by themselves.
+
+How releases are signed and published: [docs/releasing.md](docs/releasing.md).
 
 ## Building
 
@@ -52,7 +73,10 @@ The [`Justfile`](Justfile) wraps the usual commands; install [just](https://just
 | `just run <options>` | Run the app, e.g. `just run --profile a --broadcast test --share-audio`. |
 | `just demo` | Two instances on this machine: Alice broadcasts the test pattern with sound, Bob watches. |
 | `just check` | What CI checks: formatting, clippy (warnings as errors) and the tests. |
-| `just package [label]` | Windows: release build plus quickstart, zipped into `dist/peeroxide-<version>[-<label>]-windows-x64.zip`. |
+| `just package [label]` | Windows: release build plus quickstart, zipped into `dist/peeroxide-<version>[-<label>]-windows-x64.zip` and signed for the updater (`.minisig`). |
+| `just release-keygen` | One time: create the release signing key (see [releasing](docs/releasing.md)). |
+| `just publish <notes.md>` | Publish the packaged release, zip and signature, as a GitHub pre-release. |
+| `just serve-release <zip>` | Pretend to be GitHub on this PC, to test the self-update without publishing anything. |
 | `just probe-audio`, `just probe-capture`, `just bench` | The developer tools listed under Testing. |
 
 ### Command-line options
@@ -60,6 +84,7 @@ The [`Justfile`](Justfile) wraps the usual commands; install [just](https://just
 | Option | Purpose |
 |---|---|
 | `--name <NAME>` | Name shown to others (defaults to the saved name, then the computer name). |
+| `--no-update` | Don't check for updates at start (see [Updates](#updates)). |
 | `--profile <NAME>` | Separate identity, settings and logs. Lets you run several instances on one machine. |
 | `--broadcast <SOURCE>` | Start broadcasting immediately: `test`, `monitor`, or part of a window title. |
 | `--share-audio` | With `--broadcast`: turn on **Share audio** (remembered, like the checkbox). With `test`, the audio is a beep in step with a flashing square. |
@@ -84,7 +109,9 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 
 ### Distributing a Windows build
 
-`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The binary isn't code-signed, so SmartScreen shows "Windows protected your PC" on first run (More info → Run anyway).
+`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The exe carries the Peeroxide icon (`assets/`) and version details (Properties → Details, Task Manager), embedded by `crates/app/build.rs`.
+
+**"Windows protected your PC".** The binary isn't code-signed, so Microsoft Defender SmartScreen warns the first time someone runs a downloaded copy. It only warns about files carrying Windows' "downloaded from the internet" mark. Testers can either click More info → Run anyway, or clear the mark first: right-click the zip (or the exe) → Properties → tick **Unblock** → OK. Updates installed by the app itself carry no mark, so the warning only ever appears on the first manual install. Removing it for good needs code signing (see the [roadmap](docs/roadmap.md), 0.8).
 
 ## Architecture
 
@@ -95,6 +122,7 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 | `crates/audio` | Audio capture: Windows process loopback via `wasapi` (one app's process tree, or everything except Peeroxide), plus a test tone. Playback via `cpal` with a lock-free ring buffer and volume/mute. The playout scheduler that keeps audio in sync with video. |
 | `crates/net` | Peer identity, fingerprint-pinned TLS 1.3 over QUIC (`quinn`), wire protocol, `BroadcastServer`, `ViewerClient`. |
 | `crates/discovery` | mDNS announce/browse (`mdns-sd`) with validation of untrusted announcements. |
+| `crates/update` | Self-update: GitHub release lookup (`ureq`, rustls + the OS certificate store), download with size caps, minisign signature check, and replacing the running exe (`self-replace`). Also the `release-sign` and `serve-release` tools. |
 | `crates/app` | `peeroxide` binary: egui UI, controller, capture→encode and decode→display pipelines (video and audio), viewer state machine, settings, logging. |
 
 ```
@@ -126,6 +154,8 @@ Mapping to [abuse-cases.md](docs/abuse-cases.md):
 | AC-08 Fake announcement flood | Announcements are validated (version, 64-hex fingerprint, port, IPv4 addresses, sanitized name) and capped at 64 peers. |
 | AC-10 Capture beyond the selection | Windows are captured through the OS window-capture API, never by cropping a desktop capture. A window's audio is captured through the OS per-process loopback API (that app's process tree only), never by filtering the whole system's sound. The microphone is never captured. |
 | AC-11 Unintended audio disclosure | Audio is off by default and chosen per broadcast; the UI states exactly what is captured; a window shares only its app's sound; Peeroxide's own playback is excluded; nothing is captured while no one watches. |
+| AC-12 Malicious update | Updates must carry a minisign signature from the release key, which is kept offline and never on GitHub. The signed comment must name the exact package, and only strictly newer versions are accepted, so neither an old package nor a downgrade can be slipped in. HTTPS only, with size caps; nothing is extracted before verification, and the package's own paths are never used. |
+| AC-13 Update check exposure | One request per start, carrying only the app version; `--no-update` turns it off. |
 
 Not yet addressed: AC-02 (viewers are not authenticated; any peer on the LAN can watch, and hear, a broadcast) and AC-09 (the H.264 decoder is C code running in-process; sandboxing and fuzzing are future work). The Opus decoder is pure Rust on its own thread with panics caught, and survives a 5,000-packet garbage test, but it isn't fuzzed or sandboxed either. Treat broadcasts as visible and audible to everyone on the network.
 
@@ -155,7 +185,7 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (91) cover:
+Automated tests (121) cover:
 - the wire protocol, including malformed and oversized input, for video and audio;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
@@ -163,6 +193,12 @@ Automated tests (91) cover:
 - Opus round trips (tone levels and stereo separation at both bitrates, silence, garbage packets, loss concealment);
 - the playout scheduler (jitter margin, sync with slower and faster video, the 200 ms cap, drift corrections, gaps), 20 ms framing of captured audio, the resampler, the volume control and the test tone;
 - announcement validation and the peer-table cap, plus a real mDNS round trip;
+- the self-update, against a local server standing in for GitHub:
+  - choosing the release: newest newer signed one, pre-releases included; drafts, older or equal versions, unsigned packages and other platforms ignored;
+  - signatures: valid, tampered, wrong key, replayed under another name, edited signed comment;
+  - the package: extracting the exe, rejecting archives with none or several, and paths that try to escape;
+  - behaviour: size caps, skip, rate limits, a silent server (5 s), a second instance, insecure URLs;
+  - restart options, and the notes shown after a failure;
 - saved contacts (merge, cap, corrupt files, ID-change detection), the sticky broadcast port, and audio settings defaults for older settings files;
 - the viewer state machine against the use-case diagram;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
@@ -187,6 +223,9 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - [ ] Sharing a monitor while also watching someone: no echo or feedback.
 - [x] Two machines on the LAN with audio.
 - [ ] Audio over Radmin VPN with the **Internet / VPN** preset.
+- [x] Self-update on one PC with a throwaway key and a local server: 0.4.99 updated itself to 0.5.0 in about 2 s and restarted showing "Updated to 0.5.0"; started again, it found nothing newer; a tampered package was rejected and the app opened on its old version; with no server it opened in about 2 s.
+- [x] A release build with the real key checks GitHub itself over HTTPS (Windows certificate store) and reports "up to date" in about 0.4 s.
+- [ ] Self-update by hand: Skip, a read-only folder, two profiles starting at once, and a real update through GitHub (the release after the first one with the updater).
 - [ ] macOS and Linux (see below).
 
 ## Known limitations
@@ -197,6 +236,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.7. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
 - Windows Store (UWP) apps: their windows belong to `ApplicationFrameHost.exe`, so sharing such a window shares none of its sound. Share the monitor instead.
 - Audio is chosen before a broadcast starts; there is no mute while live.
+- Self-update: Windows only, and the first version with the updater has to be installed by hand. Some antivirus programs distrust apps that replace their own executable; if yours blocks it, download the new version by hand.
 - The window list may include a few invisible system windows.
 - OpenH264 built from source is not covered by Cisco's patent license, which only applies to Cisco's prebuilt binary. That's fine for personal LAN use; distribution would need the prebuilt library, which the `openh264` crate can load.
 
@@ -207,7 +247,9 @@ In the platform's application-data directory; on Windows, `%APPDATA%\Peeroxide\d
 - `identity.cert.der`, `identity.key.der`: this peer's identity. Deleting them creates a new ID.
 - `settings.toml`: display name, quality preset, broadcast port, whether to share audio, and volume/mute.
 - `contacts.toml`: saved broadcasters (ID, name, last working addresses).
-- `logs/session.log.YYYY-MM-DD`: session log.
+- `logs/session.log.YYYY-MM-DD`: session log, including update checks and installs.
+
+While updating, `peeroxide.update.*` files briefly appear next to `peeroxide.exe`; they are removed when it finishes.
 
 ## License
 

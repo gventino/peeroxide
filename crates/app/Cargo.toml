@@ -1,5 +1,6 @@
 [package]
 name = "peeroxide"
+description = "Peer-to-peer LAN screen sharing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,6 +19,7 @@ peeroxide-capture = { path = "../capture" }
 peeroxide-codec = { path = "../codec" }
 peeroxide-discovery = { path = "../discovery" }
 peeroxide-net = { path = "../net" }
+peeroxide-update = { path = "../update" }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 toml = "1.1.6"
@@ -30,3 +32,6 @@ workspace = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[build-dependencies]
+winresource = "0.1.31"

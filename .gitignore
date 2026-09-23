@@ -25,3 +25,6 @@ target
 
 # Written by `just probe-audio` (the audio probe example)
 /audio-probe.wav
+
+# Release signing keys never belong in the repository (see docs/releasing.md)
+*.key
