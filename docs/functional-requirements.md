@@ -1,6 +1,6 @@
 # Functional Requirements
 
-This document lists the functional requirements (FR) for the P2P LAN Screen Sharing application: a cross-platform (Windows/macOS/Linux) Rust application that lets multiple peers on the same local network broadcast their screen simultaneously, while each viewer watches only one broadcaster's stream at a time. No central server is involved; peers discover and connect to each other directly.
+This document lists the functional requirements (FR) for Peeroxide: a cross-platform (Windows/macOS/Linux) Rust application that lets multiple peers on the same local network broadcast their screen simultaneously, while each viewer watches only one broadcaster's stream at a time. No central server is involved; peers discover and connect to each other directly.
 
 Audio sharing is a planned but deferred feature and is explicitly out of scope for the current MVP (see FR-14).
 

@@ -1,5 +1,5 @@
 [package]
-name = "p2pss"
+name = "peeroxide"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,10 +13,10 @@ directories = "6.0.0"
 eframe = "0.36.2"
 gethostname = "1.1.0"
 if-addrs = "0.15"
-p2pss-capture = { path = "../capture" }
-p2pss-codec = { path = "../codec" }
-p2pss-discovery = { path = "../discovery" }
-p2pss-net = { path = "../net" }
+peeroxide-capture = { path = "../capture" }
+peeroxide-codec = { path = "../codec" }
+peeroxide-discovery = { path = "../discovery" }
+peeroxide-net = { path = "../net" }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 toml = "1.1.6"

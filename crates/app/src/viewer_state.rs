@@ -1,6 +1,6 @@
 //! Viewer connection state machine (use-cases.md, "Viewer connection state").
 
-use p2pss_net::{Fingerprint, SessionEnd};
+use peeroxide_net::{Fingerprint, SessionEnd};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PeerRef {

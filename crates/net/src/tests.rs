@@ -221,7 +221,7 @@ async fn unknown_protocol_version_is_refused() {
     let endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
     let (config, _) = tls::client_config(ts.identity.fingerprint()).unwrap();
     let conn = endpoint
-        .connect_with(config, ts.addr(), "p2pss.local")
+        .connect_with(config, ts.addr(), "peeroxide.local")
         .unwrap()
         .await
         .unwrap();

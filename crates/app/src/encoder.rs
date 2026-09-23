@@ -5,9 +5,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use p2pss_capture::{CaptureOptions, CaptureStream, CloseReason, Next, Source};
-use p2pss_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
-use p2pss_net::VideoFrame;
+use peeroxide_capture::{CaptureOptions, CaptureStream, CloseReason, Next, Source};
+use peeroxide_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
+use peeroxide_net::VideoFrame;
 
 use crate::stats::Meter;
 
@@ -138,7 +138,7 @@ fn run(
         let s = match &mut session {
             Some(s) => s,
             None => {
-                let capture = match p2pss_capture::start(
+                let capture = match peeroxide_capture::start(
                     source,
                     CaptureOptions {
                         fps: preset.fps,
@@ -146,7 +146,7 @@ fn run(
                     },
                 ) {
                     Ok(c) => c,
-                    Err(p2pss_capture::CaptureError::SourceNotFound) => {
+                    Err(peeroxide_capture::CaptureError::SourceNotFound) => {
                         return EncoderEnd::SourceClosed;
                     }
                     Err(e) => return EncoderEnd::Failed(e.to_string()),

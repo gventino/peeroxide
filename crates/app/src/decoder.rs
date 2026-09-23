@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use p2pss_codec::{DecodedFrame, H264Decoder, VideoDecoder};
+use peeroxide_codec::{DecodedFrame, H264Decoder, VideoDecoder};
 
 use crate::stats::Meter;
-use p2pss_net::VideoFrame;
+use peeroxide_net::VideoFrame;
 
 const QUEUE: usize = 8;
 

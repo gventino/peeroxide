@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 use std::path::Path;
 
-use p2pss_net::Fingerprint;
+use peeroxide_net::Fingerprint;
 use serde::{Deserialize, Serialize};
 
 const FILE: &str = "contacts.toml";

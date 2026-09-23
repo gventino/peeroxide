@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
-use p2pss_capture::{Source, SourceKind, list_sources};
-use p2pss_codec::Preset;
-use p2pss_discovery::Peer;
-use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
+use peeroxide_capture::{Source, SourceKind, list_sources};
+use peeroxide_codec::Preset;
+use peeroxide_discovery::Peer;
+use peeroxide_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
 use crate::contacts::{Contact, Contacts, ago};

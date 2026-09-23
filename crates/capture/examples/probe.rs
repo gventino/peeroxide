@@ -1,9 +1,9 @@
 //! Lists capture sources and measures the delivered frame rate of one of them.
-//! Usage: cargo run -p p2pss-capture --example probe [source-index|title-substring] [seconds]
+//! Usage: cargo run -p peeroxide-capture --example probe [source-index|title-substring] [seconds]
 
 use std::time::{Duration, Instant};
 
-use p2pss_capture::{CaptureOptions, Next, list_sources, start};
+use peeroxide_capture::{CaptureOptions, Next, list_sources, start};
 
 fn main() {
     let sources = list_sources().expect("list sources");

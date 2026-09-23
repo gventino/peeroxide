@@ -71,7 +71,7 @@ impl Clone for Identity {
 
 impl Identity {
     pub fn generate() -> Result<Self, NetError> {
-        let certified = rcgen::generate_simple_self_signed(vec!["p2pss.local".to_string()])
+        let certified = rcgen::generate_simple_self_signed(vec!["peeroxide.local".to_string()])
             .map_err(|e| NetError::Config(format!("certificate generation failed: {e}")))?;
         let cert = certified.cert.der().clone();
         let key = PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());

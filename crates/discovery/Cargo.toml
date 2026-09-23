@@ -1,5 +1,5 @@
 [package]
-name = "p2pss-discovery"
+name = "peeroxide-discovery"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

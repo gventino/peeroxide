@@ -11,10 +11,10 @@ mod ui;
 mod video;
 mod viewer_state;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use p2pss_net::Identity;
+use peeroxide_net::Identity;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about = "Peer-to-peer LAN screen sharing")]
@@ -50,14 +50,58 @@ fn parse_profile(s: &str) -> Result<String, String> {
         .ok_or_else(|| "use 1-32 letters, digits, '-' or '_'".into())
 }
 
+const APP_NAME: &str = "Peeroxide";
+/// The app's name up to 0.2; its data folder is moved to the new location on first run.
+const OLD_APP_NAME: &str = "P2P Screen Share";
+
+fn app_data_root(name: &str) -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", name).map(|d| d.data_dir().to_path_buf())
+}
+
 pub fn data_dir(profile: Option<&str>) -> PathBuf {
-    let base = directories::ProjectDirs::from("", "", "P2P Screen Share")
-        .map(|d| d.data_dir().to_path_buf())
-        .unwrap_or_else(|| std::env::temp_dir().join("p2p-screen-share"));
+    let base = app_data_root(APP_NAME).unwrap_or_else(|| std::env::temp_dir().join("peeroxide"));
     match profile {
         Some(p) => base.join("profiles").join(p),
         None => base,
     }
+}
+
+/// Moves the pre-rename data folder (identity, settings, contacts, logs) to `new`, once.
+/// Returns whether anything was migrated.
+fn migrate_data(old: &Path, new: &Path) -> std::io::Result<bool> {
+    if new.exists() || !old.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::rename(old, new).is_err() {
+        // An old version still running keeps its log file open; copy everything else instead.
+        copy_except_logs(old, new)?;
+    }
+    // On Windows the data lives in "<app>\data": drop the old, now empty, "<app>" folder.
+    if old.file_name() == Some("data".as_ref())
+        && let Some(parent) = old.parent()
+    {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(true)
+}
+
+fn copy_except_logs(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            if entry.file_name() != "logs" {
+                copy_except_logs(&entry.path(), &target)?;
+            }
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Logs to stdout and to a daily-rotated file under `<data dir>/logs`, which doubles as the
@@ -69,7 +113,7 @@ fn init_logging(dir: &std::path::Path) -> tracing_appender::non_blocking::Worker
         "session.log",
     ));
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info,p2pss=debug,wgpu_hal=warn,egui_wgpu=warn".into());
+        .unwrap_or_else(|_| "info,peeroxide=debug,wgpu_hal=warn,egui_wgpu=warn".into());
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
@@ -84,8 +128,17 @@ fn init_logging(dir: &std::path::Path) -> tracing_appender::non_blocking::Worker
 
 fn main() -> eframe::Result {
     let args = Args::parse();
+    let migrated = match (app_data_root(OLD_APP_NAME), app_data_root(APP_NAME)) {
+        (Some(old), Some(new)) => migrate_data(&old, &new),
+        _ => Ok(false),
+    };
     let dir = data_dir(args.profile.as_deref());
     let _log_guard = init_logging(&dir);
+    match migrated {
+        Ok(true) => tracing::info!("moved data from the {OLD_APP_NAME} folder"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("could not migrate data from the {OLD_APP_NAME} folder: {e}"),
+    }
 
     let identity = Identity::load_or_create(&dir).unwrap_or_else(|e| {
         tracing::warn!(
@@ -109,8 +162,8 @@ fn main() -> eframe::Result {
     tracing::info!(name = %display_name, fingerprint = %identity.fingerprint(), dir = %dir.display(), "starting");
 
     let title = match &args.profile {
-        Some(p) => format!("P2P Screen Share — {p}"),
-        None => "P2P Screen Share".into(),
+        Some(p) => format!("{APP_NAME} — {p}"),
+        None => APP_NAME.into(),
     };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -133,4 +186,76 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn old_layout(root: &Path) -> PathBuf {
+        let old = root.join(OLD_APP_NAME).join("data");
+        std::fs::create_dir_all(old.join("logs")).unwrap();
+        std::fs::create_dir_all(old.join("profiles").join("a")).unwrap();
+        std::fs::write(old.join("identity.key.der"), b"key").unwrap();
+        std::fs::write(old.join("contacts.toml"), b"contacts").unwrap();
+        std::fs::write(old.join("profiles").join("a").join("settings.toml"), b"a").unwrap();
+        std::fs::write(old.join("logs").join("session.log"), b"log").unwrap();
+        old
+    }
+
+    #[test]
+    fn moves_old_data_once_and_removes_the_old_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let old = old_layout(root.path());
+        let new = root.path().join(APP_NAME).join("data");
+
+        assert!(migrate_data(&old, &new).unwrap());
+        assert_eq!(std::fs::read(new.join("identity.key.der")).unwrap(), b"key");
+        assert_eq!(
+            std::fs::read(new.join("profiles").join("a").join("settings.toml")).unwrap(),
+            b"a"
+        );
+        assert!(!root.path().join(OLD_APP_NAME).exists());
+
+        assert!(
+            !migrate_data(&old, &new).unwrap(),
+            "nothing left to migrate"
+        );
+    }
+
+    #[test]
+    fn never_overwrites_existing_new_data() {
+        let root = tempfile::tempdir().unwrap();
+        let old = old_layout(root.path());
+        let new = root.path().join(APP_NAME).join("data");
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("identity.key.der"), b"newer").unwrap();
+
+        assert!(!migrate_data(&old, &new).unwrap());
+        assert_eq!(
+            std::fs::read(new.join("identity.key.der")).unwrap(),
+            b"newer"
+        );
+        assert!(old.exists());
+    }
+
+    #[test]
+    fn copy_fallback_keeps_everything_but_logs() {
+        let root = tempfile::tempdir().unwrap();
+        let old = old_layout(root.path());
+        let new = root.path().join("copy");
+
+        copy_except_logs(&old, &new).unwrap();
+        assert_eq!(
+            std::fs::read(new.join("contacts.toml")).unwrap(),
+            b"contacts"
+        );
+        assert!(
+            new.join("profiles")
+                .join("a")
+                .join("settings.toml")
+                .exists()
+        );
+        assert!(!new.join("logs").exists());
+    }
 }

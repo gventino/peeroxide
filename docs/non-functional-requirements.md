@@ -1,6 +1,6 @@
 # Non-Functional Requirements
 
-This document lists the non-functional requirements (NFR) for the P2P LAN Screen Sharing application, grouped by quality attribute.
+This document lists the non-functional requirements (NFR) for Peeroxide, grouped by quality attribute.
 
 ```mermaid
 mindmap

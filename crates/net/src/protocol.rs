@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const PROTOCOL_VERSION: u16 = 1;
-pub(crate) const ALPN: &[u8] = b"p2pss/1";
+pub(crate) const ALPN: &[u8] = b"peeroxide/1";
 pub(crate) const MAX_CONTROL_MSG: usize = 64 * 1024;
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 const HEADER_LEN: usize = 21;

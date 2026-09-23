@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use p2pss_codec::Preset;
+use peeroxide_codec::Preset;
 use serde::{Deserialize, Serialize};
 
 const FILE: &str = "settings.toml";

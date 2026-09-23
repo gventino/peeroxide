@@ -3102,75 +3102,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "p2pss"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "directories",
- "eframe",
- "gethostname",
- "if-addrs",
- "p2pss-capture",
- "p2pss-codec",
- "p2pss-discovery",
- "p2pss-net",
- "serde",
- "tempfile",
- "tokio",
- "toml 1.1.6+spec-1.1.0",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "p2pss-capture"
-version = "0.2.0"
-dependencies = [
- "scap",
- "thiserror 2.0.20",
- "windows-capture 2.0.1",
-]
-
-[[package]]
-name = "p2pss-codec"
-version = "0.2.0"
-dependencies = [
- "fast_image_resize",
- "openh264",
- "p2pss-capture",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "p2pss-discovery"
-version = "0.2.0"
-dependencies = [
- "mdns-sd",
- "thiserror 2.0.20",
- "tracing",
-]
-
-[[package]]
-name = "p2pss-net"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "postcard",
- "quinn",
- "rcgen",
- "rustls",
- "serde",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3197,6 +3128,75 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "peeroxide"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "directories",
+ "eframe",
+ "gethostname",
+ "if-addrs",
+ "peeroxide-capture",
+ "peeroxide-codec",
+ "peeroxide-discovery",
+ "peeroxide-net",
+ "serde",
+ "tempfile",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "peeroxide-capture"
+version = "0.3.0"
+dependencies = [
+ "scap",
+ "thiserror 2.0.20",
+ "windows-capture 2.0.1",
+]
+
+[[package]]
+name = "peeroxide-codec"
+version = "0.3.0"
+dependencies = [
+ "fast_image_resize",
+ "openh264",
+ "peeroxide-capture",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "peeroxide-discovery"
+version = "0.3.0"
+dependencies = [
+ "mdns-sd",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
+name = "peeroxide-net"
+version = "0.3.0"
+dependencies = [
+ "bytes",
+ "postcard",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

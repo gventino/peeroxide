@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
-pub const SERVICE_TYPE: &str = "_p2pss._udp.local.";
+pub const SERVICE_TYPE: &str = "_peeroxide._udp.local.";
 pub const MAX_PEERS: usize = 64;
 const TXT_VERSION: &str = "1";
 const MAX_NAME_BYTES: usize = 63;
@@ -53,7 +53,7 @@ impl Discovery {
         self.withdraw();
         // The fingerprint prefix makes instance names unique even when display names collide.
         let instance = &self.own_fingerprint[..16];
-        let host = format!("p2pss-{instance}.local.");
+        let host = format!("peeroxide-{instance}.local.");
         let name = sanitize_name(name);
         let props = [
             ("v", TXT_VERSION),

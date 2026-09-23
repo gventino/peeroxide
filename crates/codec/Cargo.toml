@@ -1,5 +1,5 @@
 [package]
-name = "p2pss-codec"
+name = "peeroxide-codec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,4 +14,4 @@ thiserror = "2.0.20"
 workspace = true
 
 [dev-dependencies]
-p2pss-capture = { path = "../capture" }
+peeroxide-capture = { path = "../capture" }

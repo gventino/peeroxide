@@ -5,10 +5,10 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use eframe::egui;
-use p2pss_capture::Source;
-use p2pss_codec::Preset;
-use p2pss_discovery::{Discovery, Peer};
-use p2pss_net::{
+use peeroxide_capture::Source;
+use peeroxide_codec::Preset;
+use peeroxide_discovery::{Discovery, Peer};
+use peeroxide_net::{
     BroadcastServer, Fingerprint, Identity, NetError, ServerOptions, SessionEvent, SessionHandle,
     SessionId, StopReason, ViewerClient,
 };

@@ -182,7 +182,7 @@ async fn connect_any(
     for addr in addrs.iter().filter(|a| a.is_ipv4()) {
         let (config, mismatch) = tls::client_config(fingerprint)
             .map_err(|e| SessionEnd::ProtocolError(e.to_string()))?;
-        let connecting = match endpoint.connect_with(config, *addr, "p2pss.local") {
+        let connecting = match endpoint.connect_with(config, *addr, "peeroxide.local") {
             Ok(c) => c,
             Err(e) => {
                 last_error = format!("{addr}: {e}");

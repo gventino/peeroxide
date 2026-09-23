@@ -1,6 +1,6 @@
 # Abuse Cases (STRIDE)
 
-This document analyzes threats against the P2P LAN Screen Sharing application using the **STRIDE** framework: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege. Because the application has no central server, most threats originate from other peers or devices on the same LAN.
+This document analyzes threats against Peeroxide using the **STRIDE** framework: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege. Because the application has no central server, most threats originate from other peers or devices on the same LAN.
 
 ```mermaid
 flowchart LR

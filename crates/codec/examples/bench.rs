@@ -1,10 +1,10 @@
 //! Measures capture → canvas → H.264 encode → decode on a real source.
-//! Usage: cargo run --release -p p2pss-codec --example bench [source-index|test] [seconds] [720|1080]
+//! Usage: cargo run --release -p peeroxide-codec --example bench [source-index|test] [seconds] [720|1080]
 
 use std::time::{Duration, Instant};
 
-use p2pss_capture::{CaptureOptions, Next, Source, list_sources, start};
-use p2pss_codec::{
+use peeroxide_capture::{CaptureOptions, Next, Source, list_sources, start};
+use peeroxide_codec::{
     Canvas, H264Decoder, H264Encoder, Preset, VideoDecoder, VideoEncoder, canvas_size,
 };
 

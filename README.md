@@ -1,8 +1,10 @@
-# P2P Screen Share
+# Peeroxide
 
 Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the LAN can broadcast a monitor or a single window, several people can broadcast at the same time, and each viewer watches one stream at a time. There is no server: peers find each other with mDNS and stream directly over encrypted QUIC.
 
 **Status: MVP.** Video only; audio is planned (FR-14). Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
+
+Versions 0.3 and later can't talk to 0.2 or earlier (released as "P2P Screen Share"): the protocol and discovery names changed with the rename, so everyone needs to update.
 
 Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md)
 
@@ -32,7 +34,7 @@ Requirements:
 
 ```sh
 cargo build --release
-./target/release/p2pss        # p2pss.exe on Windows
+./target/release/peeroxide        # peeroxide.exe on Windows
 ```
 
 The result is a single self-contained executable.
@@ -50,8 +52,8 @@ The result is a single self-contained executable.
 Try it on one machine:
 
 ```sh
-p2pss --profile a --name Alice --broadcast test
-p2pss --profile b --name Bob --watch alice
+peeroxide --profile a --name Alice --broadcast test
+peeroxide --profile b --name Bob --watch alice
 ```
 
 ### Network requirements
@@ -63,7 +65,7 @@ p2pss --profile b --name Bob --watch alice
 
 ### Distributing a Windows build
 
-`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/p2pss.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The binary isn't code-signed, so SmartScreen shows "Windows protected your PC" on first run (More info → Run anyway).
+`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The binary isn't code-signed, so SmartScreen shows "Windows protected your PC" on first run (More info → Run anyway).
 
 ## Architecture
 
@@ -73,7 +75,7 @@ p2pss --profile b --name Bob --watch alice
 | `crates/codec` | Fixed-size canvas (scale + letterbox) and H.264 encode/decode with OpenH264, behind `VideoEncoder`/`VideoDecoder` traits so hardware encoders can be added later. |
 | `crates/net` | Peer identity, fingerprint-pinned TLS 1.3 over QUIC (`quinn`), wire protocol, `BroadcastServer`, `ViewerClient`. |
 | `crates/discovery` | mDNS announce/browse (`mdns-sd`) with validation of untrusted announcements. |
-| `crates/app` | `p2pss` binary: egui UI, controller, capture→encode and decode→display pipelines, viewer state machine, settings, logging. |
+| `crates/app` | `peeroxide` binary: egui UI, controller, capture→encode and decode→display pipelines, viewer state machine, settings, logging. |
 
 ```
 Broadcaster: capture ─▶ latest-frame slot ─▶ encoder thread (canvas → I420 → H.264)
@@ -134,7 +136,7 @@ Automated tests (59) cover:
 - the viewer state machine against the use-case diagram;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
 
-Developer tools: `cargo run --release -p p2pss-capture --example probe` (list sources, measure capture rate) and `cargo run --release -p p2pss-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]`.
+Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate) and `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]`.
 
 ### Manual checklist
 
@@ -160,7 +162,7 @@ Developer tools: `cargo run --release -p p2pss-capture --example probe` (list so
 
 ## Where data is kept
 
-In the platform's application-data directory; on Windows, `%APPDATA%\P2P Screen Share\data`. `--profile x` uses `profiles\x` inside it. The path is printed on startup (`starting … dir=…`).
+In the platform's application-data directory; on Windows, `%APPDATA%\Peeroxide\data`. `--profile x` uses `profiles\x` inside it. The path is printed on startup (`starting … dir=…`). Data from versions up to 0.2, when the app was called "P2P Screen Share", is moved there on first run.
 
 - `identity.cert.der`, `identity.key.der`: this peer's identity. Deleting them creates a new ID.
 - `settings.toml`: display name, quality preset and broadcast port.
