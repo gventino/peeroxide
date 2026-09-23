@@ -1,0 +1,18 @@
+[package]
+name = "peeroxide-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cpal = "0.18.2"
+rtrb = "0.4.0"
+thiserror = "2.0.20"
+tracing = "0.1.44"
+
+[lints]
+workspace = true
+
+[target."cfg(windows)".dependencies]
+wasapi = "0.24.0"
