@@ -5,7 +5,7 @@ Where Peeroxide stands after **0.4.0 (pre-alpha)**, and what comes next. Audio, 
 ```mermaid
 flowchart LR
     V04["0.4 ✓<br/>Audio"] --> B["Known bugs"]
-    B --> V05["0.5<br/>Fixes + better viewer"]
+    B --> V05["0.5<br/>Fixes + better viewer<br/>+ self-update"]
     V05 --> V06["0.6<br/>Privacy controls"]
     V06 --> V07["0.7<br/>macOS + Linux"]
     V07 --> V08["0.8<br/>Distribution"]
@@ -37,6 +37,7 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 🗑 (forget contact) icon rendering correctly.
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
+- Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
 - Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
 - Audio, item by item: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); a session over Radmin VPN. Checked so far: audio between two PCs on a LAN (by hand, before the 0.4.0 release), the whole pipeline on one machine (A/V offset about +55–64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
@@ -57,8 +58,9 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 
 ## 0.5 — Fixes and a better viewer
 
-Goal: a solid Windows build that is pleasant to watch.
+Goal: a solid Windows build that is pleasant to watch, and that keeps itself up to date.
 
+- **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. Before releasing: `just release-keygen` once, and commit the public key (see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
@@ -101,7 +103,7 @@ Goal: installing and updating is easy and trustworthy.
 
 - **Release builds in CI**: a GitHub Actions workflow builds, zips and attaches the binaries to a GitHub release when a tag is pushed. It also enables NASM, so OpenH264 uses its optimized assembly, which local builds without NASM don't.
 - **Installer** for Windows (MSI or a setup `.exe`) with Start-menu shortcut and uninstall. Packages for macOS (`.dmg`) and Linux (AppImage or Flatpak) once 0.7 lands.
-- **Update notifications**: check GitHub releases on start and offer to download the new version.
+- **Updates**: the Windows self-update shipped early (see 0.5). Here: update packages for macOS (`.app`) and Linux, and signing releases in CI with the key stored as a secret, if CI builds the releases.
 - **Code signing** so Windows stops showing the SmartScreen warning. This needs a code-signing certificate, which costs money; free programs for open-source projects exist and are worth checking first. macOS needs Apple notarization.
 - **H.264 licensing**: ship Cisco's prebuilt OpenH264 library, which the `openh264` crate can load and which is covered by Cisco's patent license, instead of compiling it from source.
 

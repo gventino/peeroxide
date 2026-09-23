@@ -22,6 +22,15 @@ NEW: SOUND
 - Close the old version before opening this one.
 
 
+UPDATES
+-------
+- Every time you open Peeroxide it checks for a new version. If there is
+  one, it downloads it, installs it and restarts by itself; you only see a
+  progress bar for a few seconds. Click "Skip" to open right away instead.
+- Only updates signed by the Peeroxide publisher are installed.
+- No internet? The app opens normally after a few seconds.
+
+
 FIRST RUN
 ---------
 1. Unzip anywhere and double-click peeroxide.exe.
