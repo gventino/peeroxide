@@ -6,6 +6,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+fast_image_resize = "6"
+openh264 = "0.9"
+thiserror = "2.0.20"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+p2pss-capture = { path = "../capture" }
