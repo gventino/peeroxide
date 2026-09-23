@@ -103,7 +103,9 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 
 ### Distributing a Windows build
 
-`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The binary isn't code-signed, so SmartScreen shows "Windows protected your PC" on first run (More info → Run anyway).
+`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The exe carries the Peeroxide icon (`assets/`) and version details (Properties → Details, Task Manager), embedded by `crates/app/build.rs`.
+
+**"Windows protected your PC".** The binary isn't code-signed, so Microsoft Defender SmartScreen warns the first time someone runs a downloaded copy. It only warns about files carrying Windows' "downloaded from the internet" mark. Testers can either click More info → Run anyway, or clear the mark first: right-click the zip (or the exe) → Properties → tick **Unblock** → OK. Updates installed by the app itself carry no mark, so the warning only ever appears on the first manual install. Removing it for good needs code signing (see the [roadmap](docs/roadmap.md), 0.8).
 
 ## Architecture
 

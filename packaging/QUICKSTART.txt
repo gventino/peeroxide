@@ -38,6 +38,12 @@ FIRST RUN
 2. "Windows protected your PC": the app isn't code-signed.
    Click "More info" -> "Run anyway".
 
+   To avoid that warning: right-click peeroxide.exe (or the zip, before
+   unzipping) -> Properties -> tick "Unblock" at the bottom -> OK.
+   Only do this for files you downloaded from the official Peeroxide
+   release page. You only need it once: updates installed by the app
+   itself never show the warning.
+
 3. Windows Firewall prompt: tick BOTH boxes, "Private networks" AND
    "Public networks", then click Allow.
    VPN adapters such as Radmin are usually classified as Public; if Public

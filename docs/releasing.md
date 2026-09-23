@@ -61,6 +61,8 @@ Consequences:
 
 **Windows 10 (version 2004 or newer) or Windows 11, 64-bit:** `peeroxide-X.Y.Z-windows-x64.zip`. Unzip it and run `peeroxide.exe`; no installation is needed. Installed copies update themselves.
 
+To skip the "Windows protected your PC" warning: before unzipping, right-click the zip → Properties → tick **Unblock** → OK. Otherwise click More info → Run anyway. The app isn't code-signed yet; updates installed by the app never show the warning.
+
 ## New in X.Y.Z
 
 - ...

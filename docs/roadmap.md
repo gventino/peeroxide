@@ -61,6 +61,7 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 Goal: a solid Windows build that is pleasant to watch, and that keeps itself up to date.
 
 - **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
+- **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
@@ -104,7 +105,12 @@ Goal: installing and updating is easy and trustworthy.
 - **Release builds in CI**: a GitHub Actions workflow builds, zips and attaches the binaries to a GitHub release when a tag is pushed. It also enables NASM, so OpenH264 uses its optimized assembly, which local builds without NASM don't.
 - **Installer** for Windows (MSI or a setup `.exe`) with Start-menu shortcut and uninstall. Packages for macOS (`.dmg`) and Linux (AppImage or Flatpak) once 0.7 lands.
 - **Updates**: the Windows self-update shipped early (see 0.5). Here: update packages for macOS (`.app`) and Linux, and signing releases in CI with the key stored as a secret, if CI builds the releases.
-- **Code signing** so Windows stops showing the SmartScreen warning. This needs a code-signing certificate, which costs money; free programs for open-source projects exist and are worth checking first. macOS needs Apple notarization.
+- **Code signing** so Windows stops showing the SmartScreen warning. Until then, the "Unblock" tip and the self-update keep it to one warning per tester. Options, as of 2026-09:
+  - **Azure Artifact Signing** (Microsoft, ~US$10/month): only for individuals in the US or Canada, so not available to this project as it stands.
+  - **Certum Open Source Code Signing** (~US$50–70/year): open to individual open-source developers, with identity checked by documents. The key lives in their cloud (SimplySign) and signing uses `signtool`, which fits `just package`. Certificates now last at most 459 days.
+  - **SignPath Foundation** (free for open source): needs releases built by CI (GitHub Actions, after BUG-01) and approved per release. The publisher shows as "SignPath Foundation", and the project must credit SignPath and publish a code-signing policy.
+  - Since 2024, no certificate (OV or EV) gives instant SmartScreen trust. Signed apps still build reputation as people download and run them, so early warnings may continue for a while.
+  - macOS needs Apple notarization.
 - **H.264 licensing**: ship Cisco's prebuilt OpenH264 library, which the `openh264` crate can load and which is covered by Cisco's patent license, instead of compiling it from source.
 
 ## 1.0 — Stable
