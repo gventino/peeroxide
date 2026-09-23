@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, ProgressBar, RichText};
 use peeroxide_net::Identity;
-use peeroxide_update::{Config, Outcome, RELEASES_API, Step, Version};
+use peeroxide_update::{Config, Outcome, RELEASES_API, Step, UpdateError, Version};
 
 use crate::Args;
 use crate::settings::Settings;
@@ -159,14 +159,7 @@ impl Launcher {
                     warn: false,
                 })
             }
-            Outcome::NotInstalled { release, error } => Some(UpdateNote {
-                text: format!(
-                    "Version {} is available but couldn't be installed ({error})",
-                    release.version
-                ),
-                link: Some(release.page_url),
-                warn: true,
-            }),
+            Outcome::NotInstalled { release, error } => Some(not_installed_note(&release, &error)),
         };
         self.open_main(start, note);
     }
@@ -194,6 +187,32 @@ impl Launcher {
                 Phase::Failed(e.to_string())
             }
         };
+    }
+}
+
+/// What to tell the user when a newer version exists but wasn't installed. The details are in
+/// the log.
+fn not_installed_note(release: &peeroxide_update::Release, error: &UpdateError) -> UpdateNote {
+    let version = &release.version;
+    match error {
+        // Something is wrong with the published update itself: don't send people to download it.
+        UpdateError::Verification(_) => UpdateNote {
+            text: format!(
+                "The update to {version} was rejected because its signature is invalid. Keep                  using this version and tell whoever publishes Peeroxide."
+            ),
+            link: None,
+            warn: true,
+        },
+        UpdateError::NotWritable(_) => UpdateNote {
+            text: format!("Version {version} is available, but this folder can't be updated."),
+            link: Some(release.page_url.clone()),
+            warn: true,
+        },
+        _ => UpdateNote {
+            text: format!("Version {version} is available but couldn't be installed."),
+            link: Some(release.page_url.clone()),
+            warn: true,
+        },
     }
 }
 
@@ -401,6 +420,33 @@ mod tests {
         assert_eq!(
             relaunch_args(std::iter::empty(), &v),
             args(&["--just-updated", "0.5.0"])
+        );
+    }
+
+    #[test]
+    fn a_rejected_signature_never_links_to_the_download() {
+        let release = peeroxide_update::Release {
+            version: Version::new(0, 5, 0),
+            tag: "v0.5.0".into(),
+            page_url: "https://example.com/v0.5.0".into(),
+            package: peeroxide_update::Asset {
+                name: "p.zip".into(),
+                size: 1,
+                url: "https://example.com/p.zip".into(),
+            },
+            signature: peeroxide_update::Asset {
+                name: "p.zip.minisig".into(),
+                size: 1,
+                url: "https://example.com/p.zip.minisig".into(),
+            },
+        };
+        let bad = not_installed_note(&release, &UpdateError::Verification("x".into()));
+        assert!(bad.link.is_none());
+        assert!(bad.text.contains("rejected"));
+        let read_only = not_installed_note(&release, &UpdateError::NotWritable("x".into()));
+        assert_eq!(
+            read_only.link.as_deref(),
+            Some("https://example.com/v0.5.0")
         );
     }
 

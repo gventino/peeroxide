@@ -128,7 +128,7 @@ impl App {
         if let Some(link) = &note.link {
             ui.hyperlink_to("Download", link);
         }
-        if ui.small_button("✕").on_hover_text("Dismiss").clicked() {
+        if ui.small_button("×").on_hover_text("Dismiss").clicked() {
             self.update_note = None;
         }
     }
