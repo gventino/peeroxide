@@ -46,7 +46,7 @@ mindmap
 
 | ID | Requirement | Description |
 |----|-------------|-------------|
-| NFR-06 | Cross-Platform Codebase | The application shall be built from a single Rust codebase that compiles and runs natively on Windows, macOS, and Linux. |
+| NFR-06 | Cross-Platform Codebase | The application shall be built from a single Rust codebase that compiles and runs natively on Windows (10 and 11), macOS, and Linux (both X11 and Wayland sessions). |
 | NFR-07 | Minimal Runtime Dependencies | The application should be distributable as a self-contained binary per platform, avoiding mandatory external runtime installs (e.g., no separately installed system-wide FFmpeg requirement). |
 
 ## Usability

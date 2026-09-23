@@ -2,7 +2,9 @@
 
 Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the LAN can broadcast a monitor or a single window, several people can broadcast at the same time, and each viewer watches one stream at a time. There is no server: peers find each other with mDNS and stream directly over encrypted QUIC.
 
-**Status: MVP.** Video, plus optional audio (sharing audio needs a Windows 10 2004+ broadcaster; viewers hear it on any platform). Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
+**Status: MVP.** Video, plus optional audio. Sharing audio needs a Windows broadcaster (Windows 10 2004+ or 11); playback is built for every platform. Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
+
+Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.7 (see the [roadmap](docs/roadmap.md)).
 
 Versions 0.3 and later can't talk to 0.2 or earlier (released as "P2P Screen Share"): the protocol and discovery names changed with the rename, so everyone needs to update. Builds with audio (protocol 2) can't talk to 0.3 either; both sides show "incompatible version".
 
@@ -179,7 +181,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - **macOS and Linux are untested.** On macOS, grant Screen Recording permission (System Settings → Privacy & Security) and restart the app. On Linux/Wayland the source is chosen in the system's screen-share dialog.
 - IPv4 only.
 - Software encoding only (OpenH264). Hardware encoders (NVENC, Quick Sync, VideoToolbox) are a planned backend for the encoder trait.
-- Audio can only be shared from Windows (10 2004 or later) for now; macOS and Linux capture is planned for 0.7. Playback works on all three.
+- Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.7. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
 - Windows Store (UWP) apps: their windows belong to `ApplicationFrameHost.exe`, so sharing such a window shares none of its sound. Share the monitor instead.
 - Audio is chosen before a broadcast starts; there is no mute while live.
 - The window list may include a few invisible system windows.

@@ -37,6 +37,7 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 🗑 (forget contact) icon rendering correctly.
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
+- Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
 - Audio, by ear: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); two machines on the LAN and over Radmin VPN. Checked so far: the whole pipeline on one machine with the output muted (A/V offset about +64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
 ## 0.4 — Fixes and a better viewer
@@ -79,14 +80,20 @@ Goal: hear what the broadcaster hears. Built ahead of 0.4/0.5; needs the by-ear 
 
 ## 0.7 — macOS and Linux
 
-Goal: the same features on all three platforms, tested on real machines.
+Goal: the same features on all three platforms, tested on real machines. Targets: Windows 10 and 11, macOS, and Linux on both X11 and Wayland.
 
 - CI green on macOS and Linux (after BUG-01).
 - **macOS**: run the ScreenCaptureKit path; handle the Screen Recording permission flow (prompt, restart hint); package as an `.app` so the permission belongs to the app, not the terminal.
-- **Linux**: run the PipeWire / xdg-desktop-portal path on Wayland (GNOME and KDE); decide on X11 support.
+- **Linux**: run the PipeWire / xdg-desktop-portal path on Wayland (GNOME and KDE), and support X11 too (decided: both are targets). `scap` 0.0.8 only captures through the portal, so X11 needs its own capture path or a different library.
   - Known risk: the `scap` 0.0.8 Linux backend asks PipeWire for RGBA but panics if it actually receives it. Patch or replace it before calling Linux supported.
 - Cross-platform interoperability (FR-13): Windows ↔ macOS ↔ Linux sessions verified.
-- Platform audio (if 0.6 is done): ScreenCaptureKit audio on macOS, PipeWire monitor sources on Linux.
+- **Audio capture** (0.6 capture is Windows-only; playback and everything else already builds for all three):
+  - **macOS**: ScreenCaptureKit audio through the `screencapturekit` crate `scap` already pulls in. It has `captures_audio` and `excludes_current_process_audio`, and returns PCM buffers. Needs macOS 13+; macOS 12.3–12.x keeps video only, with a note. Uses the same Screen Recording permission. To verify on a real Mac: a window share gets only that window's app's sound.
+  - **Linux**: audio is the same on X11 and Wayland; it depends on the sound server. Decide between:
+    - PipeWire natively: already a dependency. Per-app capture and "everything except Peeroxide" by linking app streams. Doesn't reach systems where PulseAudio plays the sound (e.g. Ubuntu 22.04 LTS).
+    - PulseAudio's API: works on PulseAudio and on PipeWire (through pipewire-pulse). Needs `libpulse-dev` to build. Excluding Peeroxide's own playback is harder, so broadcasting while watching could feed a stream back.
+  - **Linux window shares**: on Wayland the portal doesn't say which window was picked, so the window's app can't be found. Share all sound except Peeroxide, labelled as such, or add a "which app's sound?" picker.
+  - Needs real machines: none of this can be tested from the Windows development PC. CI (after BUG-01) covers compiling and unit tests only.
 
 ## 0.8 — Distribution
 

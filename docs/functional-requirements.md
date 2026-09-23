@@ -59,3 +59,4 @@ Each broadcaster streams independently to whichever viewers are currently connec
 - FR-06 and FR-07 are the core simplification constraint of this app: the UI and network layer never need to composite or decode more than one incoming stream at a time on the viewer side.
 - FR-08 and FR-09 mean the architecture must treat "broadcaster" and "viewer" as roles a peer can hold independently and simultaneously (a peer could, in principle, broadcast and view at the same time).
 - FR-14 to FR-16: audio is an optional companion to the video, never a dependency. A broadcast or a viewing session must keep working video-only when audio is off, unsupported, or failing (see NFR-05).
+- Current status of FR-14: audio capture exists for Windows (10 2004+ and 11) only. macOS and Linux broadcasters can't share audio yet (planned for 0.7, see the roadmap), but viewers on any platform can play audio from a Windows broadcaster, which keeps FR-13 intact.
