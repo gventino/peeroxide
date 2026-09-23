@@ -1,0 +1,25 @@
+[package]
+name = "peeroxide-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2 = "1.1.10"
+minisign-verify = "0.2.5"
+self-replace = "1.5.0"
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+tracing = "0.1.44"
+ureq = { version = "3.4.2", default-features = false, features = ["platform-verifier", "rustls"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+minisign = "0.9.1"
+tempfile = "3.27.0"

@@ -1,0 +1,2 @@
+# No release key yet. Run `just release-keygen` once to create the signing key; it replaces
+# this file with the public key. Until then the app can't verify updates, so it never installs any.
