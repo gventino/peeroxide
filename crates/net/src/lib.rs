@@ -15,7 +15,7 @@ mod tests;
 
 pub use client::{SessionEnd, SessionEvent, SessionHandle, SessionId, ViewerClient};
 pub use identity::{Fingerprint, Identity};
-pub use protocol::{PROTOCOL_VERSION, VideoFrame};
+pub use protocol::{AudioPacket, PROTOCOL_VERSION, VideoFrame};
 pub use server::{BroadcastServer, ServerOptions, StopReason};
 
 #[derive(Debug, thiserror::Error)]

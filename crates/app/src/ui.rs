@@ -258,6 +258,7 @@ impl App {
                         SessionEvent::Connected {
                             broadcaster_name,
                             remote,
+                            ..
                         } => {
                             self.remember_contact(&broadcaster_name, remote);
                             ViewerInput::Connected { broadcaster_name }

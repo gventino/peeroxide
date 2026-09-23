@@ -8,13 +8,18 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_msg, write_frame, write_msg,
+    AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_msg, stream_kind,
+    write_audio, write_frame, write_msg, write_stream_kind,
 };
 use crate::{Identity, NetError, tls};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Frames buffered per viewer before it is considered lagging and skipped ahead to a keyframe.
 const FRAME_BUFFER: usize = 30;
+/// Audio packets (20 ms each) buffered per viewer; a lagging viewer just skips ahead.
+const AUDIO_BUFFER: usize = 50;
+/// Audio is sent before video when both are waiting, so a large keyframe never delays it.
+const AUDIO_PRIORITY: i32 = 1;
 const MAX_NAME_CHARS: usize = 64;
 
 #[derive(Clone, Debug)]
@@ -22,6 +27,8 @@ pub struct ServerOptions {
     pub name: String,
     pub max_viewers: usize,
     pub bind: SocketAddr,
+    /// Whether this broadcast shares audio (announced to viewers in `Welcome`).
+    pub audio: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +43,7 @@ struct Shared {
     name: String,
     max_viewers: usize,
     frames: broadcast::Sender<VideoFrame>,
+    audio: Option<broadcast::Sender<AudioPacket>>,
     viewers: watch::Sender<usize>,
     on_keyframe: Callback,
 }
@@ -60,6 +68,7 @@ impl BroadcastServer {
             name: options.name,
             max_viewers: options.max_viewers,
             frames: broadcast::channel(FRAME_BUFFER).0,
+            audio: options.audio.then(|| broadcast::channel(AUDIO_BUFFER).0),
             viewers: watch::channel(0).0,
             on_keyframe: Arc::new(on_keyframe_request),
         });
@@ -78,6 +87,14 @@ impl BroadcastServer {
     /// Queues a frame for every connected viewer. Never blocks.
     pub fn publish(&self, frame: VideoFrame) {
         let _ = self.shared.frames.send(frame);
+    }
+
+    /// Queues an audio packet for every connected viewer. Never blocks. Ignored if the
+    /// broadcast was started without audio.
+    pub fn publish_audio(&self, packet: AudioPacket) {
+        if let Some(audio) = &self.shared.audio {
+            let _ = audio.send(packet);
+        }
     }
 
     pub fn viewers(&self) -> watch::Receiver<usize> {
@@ -180,6 +197,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
         &mut ctrl_send,
         &ServerMsg::Welcome {
             broadcaster_name: shared.name.clone(),
+            audio: shared.audio.is_some(),
         },
     )
     .await
@@ -205,7 +223,15 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
 
     let mut frames = shared.frames.subscribe();
     (shared.on_keyframe)();
+    // Audio problems never end the session: the forwarder just stops.
+    let audio_task = shared
+        .audio
+        .as_ref()
+        .map(|audio| tokio::spawn(forward_audio(conn.clone(), audio.subscribe())));
     let mut video = conn.open_uni().await.map_err(|e| e.to_string())?;
+    write_stream_kind(&mut video, stream_kind::VIDEO)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut waiting_for_keyframe = true;
     let result = loop {
         tokio::select! {
@@ -232,7 +258,42 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
         }
     };
     control_task.abort();
+    if let Some(t) = audio_task {
+        t.abort();
+    }
     result
+}
+
+async fn forward_audio(conn: Connection, mut packets: broadcast::Receiver<AudioPacket>) {
+    let opened = async {
+        let mut stream = conn.open_uni().await.map_err(|e| e.to_string())?;
+        let _ = stream.set_priority(AUDIO_PRIORITY);
+        write_stream_kind(&mut stream, stream_kind::AUDIO)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(stream)
+    };
+    let mut stream = match opened.await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("could not open the audio stream: {e}");
+            return;
+        }
+    };
+    loop {
+        match packets.recv().await {
+            Ok(packet) => {
+                if let Err(e) = write_audio(&mut stream, &packet).await {
+                    tracing::debug!("audio stream ended: {e}");
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::debug!(skipped, "viewer lagging; skipping audio");
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
 }
 
 fn sanitize(name: &str) -> String {

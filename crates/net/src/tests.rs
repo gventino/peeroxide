@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -11,7 +11,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-use crate::protocol::{ClientMsg, close, write_msg};
+use crate::protocol::{
+    ClientMsg, ServerMsg, close, read_msg, stream_kind, write_frame, write_msg, write_stream_kind,
+};
 use crate::*;
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -21,10 +23,34 @@ struct TestServer {
     identity: Identity,
     keyframe_requests: Arc<AtomicUsize>,
     publisher: JoinHandle<()>,
+    audio_publisher: Option<JoinHandle<()>>,
+    /// Audio packets published so far.
+    audio_sent: Arc<AtomicU64>,
 }
 
 impl TestServer {
     fn start(max_viewers: usize, frame_size: usize, interval: Duration, tag: u8) -> Self {
+        Self::start_with(max_viewers, frame_size, interval, tag, None)
+    }
+
+    /// Also shares audio: every `interval`, `burst` packets of `size` bytes tagged `tag`.
+    fn with_audio(tag: u8, interval: Duration, size: usize, burst: usize) -> Self {
+        Self::start_with(
+            8,
+            1000,
+            Duration::from_millis(10),
+            tag,
+            Some((interval, size, burst)),
+        )
+    }
+
+    fn start_with(
+        max_viewers: usize,
+        frame_size: usize,
+        interval: Duration,
+        tag: u8,
+        audio: Option<(Duration, usize, usize)>,
+    ) -> Self {
         let identity = Identity::generate().unwrap();
         let want_keyframe = Arc::new(AtomicBool::new(true));
         let keyframe_requests = Arc::new(AtomicUsize::new(0));
@@ -35,6 +61,7 @@ impl TestServer {
                     name: format!("server-{tag}"),
                     max_viewers,
                     bind: "127.0.0.1:0".parse().unwrap(),
+                    audio: audio.is_some(),
                 },
                 {
                     let want = want_keyframe.clone();
@@ -61,11 +88,33 @@ impl TestServer {
                 }
             }
         });
+        let audio_sent = Arc::new(AtomicU64::new(0));
+        let audio_publisher = audio.map(|(every, size, burst)| {
+            let server = server.clone();
+            let sent = audio_sent.clone();
+            tokio::spawn(async move {
+                let mut seq = 0;
+                loop {
+                    for _ in 0..burst {
+                        server.publish_audio(AudioPacket {
+                            seq,
+                            capture_time_us: 0,
+                            data: Bytes::from(vec![tag; size]),
+                        });
+                        seq += 1;
+                        sent.store(seq, SeqCst);
+                    }
+                    tokio::time::sleep(every).await;
+                }
+            })
+        });
         Self {
             server,
             identity,
             keyframe_requests,
             publisher,
+            audio_publisher,
+            audio_sent,
         }
     }
 
@@ -89,18 +138,22 @@ impl TestServer {
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.publisher.abort();
+        if let Some(p) = &self.audio_publisher {
+            p.abort();
+        }
     }
 }
 
 struct TestViewer {
     handle: SessionHandle,
     frames: mpsc::UnboundedReceiver<VideoFrame>,
+    audio: mpsc::UnboundedReceiver<AudioPacket>,
     events: mpsc::UnboundedReceiver<SessionEvent>,
 }
 
 impl TestViewer {
     fn watch(client: &ViewerClient, addr: SocketAddr, fp: Fingerprint) -> Self {
-        Self::watch_with(client, addr, fp, |_| {})
+        Self::watch_with(client, addr, fp, |_| {}, |_| {})
     }
 
     fn watch_with(
@@ -108,8 +161,10 @@ impl TestViewer {
         addr: SocketAddr,
         fp: Fingerprint,
         on_frame: impl Fn(&VideoFrame) + Send + 'static,
+        on_audio: impl Fn(&AudioPacket) + Send + 'static,
     ) -> Self {
         let (ftx, frames) = mpsc::unbounded_channel();
+        let (atx, audio) = mpsc::unbounded_channel();
         let (etx, events) = mpsc::unbounded_channel();
         let handle = client.watch(
             vec![addr],
@@ -119,6 +174,10 @@ impl TestViewer {
                 on_frame(&f);
                 let _ = ftx.send(f);
             },
+            move |p| {
+                on_audio(&p);
+                let _ = atx.send(p);
+            },
             move |_, e| {
                 let _ = etx.send(e);
             },
@@ -126,6 +185,7 @@ impl TestViewer {
         Self {
             handle,
             frames,
+            audio,
             events,
         }
     }
@@ -142,6 +202,21 @@ impl TestViewer {
             .await
             .expect("no frame")
             .expect("frame channel closed")
+    }
+
+    async fn audio_packet(&mut self) -> AudioPacket {
+        timeout(WAIT, self.audio.recv())
+            .await
+            .expect("no audio")
+            .expect("audio channel closed")
+    }
+
+    /// The `audio` flag of the `Connected` event.
+    async fn connected(&mut self) -> bool {
+        match self.event().await {
+            SessionEvent::Connected { audio, .. } => audio,
+            other => panic!("expected Connected, got {other:?}"),
+        }
     }
 
     async fn ended(&mut self) -> SessionEnd {
@@ -164,7 +239,7 @@ async fn two_viewers_get_ordered_frames_starting_with_a_keyframe() {
     for v in &mut viewers {
         assert!(matches!(
             v.event().await,
-            SessionEvent::Connected { broadcaster_name, remote }
+            SessionEvent::Connected { broadcaster_name, remote, audio: false }
                 if broadcaster_name == "server-1" && remote == ts.addr()
         ));
         let first = v.frame().await;
@@ -216,33 +291,36 @@ async fn viewer_limit_rejects_extra_viewers_as_busy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn unknown_protocol_version_is_refused() {
-    let ts = TestServer::simple(1);
-    let endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
-    let (config, _) = tls::client_config(ts.identity.fingerprint()).unwrap();
-    let conn = endpoint
-        .connect_with(config, ts.addr(), "peeroxide.local")
-        .unwrap()
+async fn other_protocol_versions_are_refused() {
+    // 1 is Peeroxide 0.3 (video only), 999 some future version.
+    for version in [1, 999] {
+        let ts = TestServer::simple(1);
+        let endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+        let (config, _) = tls::client_config(ts.identity.fingerprint()).unwrap();
+        let conn = endpoint
+            .connect_with(config, ts.addr(), "peeroxide.local")
+            .unwrap()
+            .await
+            .unwrap();
+        let (mut send, _recv) = conn.open_bi().await.unwrap();
+        write_msg(
+            &mut send,
+            &ClientMsg::Hello {
+                version,
+                viewer_name: "other".into(),
+            },
+        )
         .await
         .unwrap();
-    let (mut send, _recv) = conn.open_bi().await.unwrap();
-    write_msg(
-        &mut send,
-        &ClientMsg::Hello {
-            version: 999,
-            viewer_name: "future".into(),
-        },
-    )
-    .await
-    .unwrap();
-    match timeout(WAIT, conn.closed()).await.unwrap() {
-        ConnectionError::ApplicationClosed(c) => {
-            assert_eq!(
-                c.error_code.into_inner(),
-                u64::from(close::VERSION_MISMATCH)
-            )
+        match timeout(WAIT, conn.closed()).await.unwrap() {
+            ConnectionError::ApplicationClosed(c) => {
+                assert_eq!(
+                    c.error_code.into_inner(),
+                    u64::from(close::VERSION_MISMATCH)
+                )
+            }
+            other => panic!("unexpected close: {other:?}"),
         }
-        other => panic!("unexpected close: {other:?}"),
     }
 }
 
@@ -251,15 +329,21 @@ async fn lagging_viewer_skips_ahead_to_a_keyframe() {
     let ts = TestServer::start(8, 64 * 1024, Duration::from_millis(1), 1);
     let client = ViewerClient::new().unwrap();
     let stalled = Arc::new(AtomicBool::new(false));
-    let mut v = TestViewer::watch_with(&client, ts.addr(), ts.identity.fingerprint(), {
-        let stalled = stalled.clone();
-        move |_| {
-            // Simulates a viewer that stops reading for a while.
-            if !stalled.swap(true, SeqCst) {
-                std::thread::sleep(Duration::from_millis(1500));
+    let mut v = TestViewer::watch_with(
+        &client,
+        ts.addr(),
+        ts.identity.fingerprint(),
+        {
+            let stalled = stalled.clone();
+            move |_| {
+                // Simulates a viewer that stops reading for a while.
+                if !stalled.swap(true, SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1500));
+                }
             }
-        }
-    });
+        },
+        |_| {},
+    );
 
     let mut prev = v.frame().await;
     loop {
@@ -355,6 +439,7 @@ async fn connected_reports_the_address_that_answered() {
         ts.identity.fingerprint(),
         "tester".into(),
         |_| {},
+        |_| {},
         move |_, e| {
             let _ = etx.send(e);
         },
@@ -375,4 +460,164 @@ async fn unreachable_broadcaster_is_reported() {
     };
     let mut v = TestViewer::watch(&client, dead, Identity::generate().unwrap().fingerprint());
     assert!(matches!(v.ended().await, SessionEnd::Unreachable(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn audio_arrives_in_order_alongside_video() {
+    let ts = TestServer::with_audio(0xA, Duration::from_millis(5), 200, 1);
+    let client = ViewerClient::new().unwrap();
+    let mut v = TestViewer::watch(&client, ts.addr(), ts.identity.fingerprint());
+    assert!(v.connected().await, "Welcome must announce audio");
+    let mut last = v.audio_packet().await;
+    assert_eq!(last.data[0], 0xA);
+    for _ in 0..20 {
+        let p = v.audio_packet().await;
+        assert_eq!(p.seq, last.seq + 1, "audio packets lost or reordered");
+        last = p;
+    }
+    assert!(v.frame().await.keyframe);
+    v.frame().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn broadcast_without_audio_sends_video_only() {
+    let ts = TestServer::simple(1);
+    let client = ViewerClient::new().unwrap();
+    let mut v = TestViewer::watch(&client, ts.addr(), ts.identity.fingerprint());
+    assert!(!v.connected().await, "Welcome must say there is no audio");
+    for _ in 0..20 {
+        v.frame().await;
+    }
+    ts.server.publish_audio(AudioPacket {
+        seq: 0,
+        capture_time_us: 0,
+        data: Bytes::from_static(&[1, 2, 3]),
+    });
+    v.frame().await;
+    assert!(v.audio.try_recv().is_err(), "no audio stream expected");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lagging_audio_skips_ahead_without_ending_the_session() {
+    // Enough data that the stall fills the stream's flow-control window and the broadcaster's
+    // buffer overflows.
+    let ts = TestServer::with_audio(1, Duration::from_millis(1), 4096, 16);
+    let client = ViewerClient::new().unwrap();
+    let stalled = Arc::new(AtomicBool::new(false));
+    let mut v = TestViewer::watch_with(&client, ts.addr(), ts.identity.fingerprint(), |_| {}, {
+        let stalled = stalled.clone();
+        let sent = ts.audio_sent.clone();
+        move |p| {
+            // The audio reader stops until the broadcaster has published ~4 MB more than it
+            // read: far beyond the stream's flow-control window plus the broadcaster's buffer.
+            // block_in_place hands this worker's queued tasks (the publisher, QUIC keep-alives)
+            // to another thread while it waits.
+            if !stalled.swap(true, SeqCst) {
+                tokio::task::block_in_place(|| {
+                    let started = std::time::Instant::now();
+                    while sent.load(SeqCst) < p.seq + 1000 && started.elapsed() < WAIT {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                });
+            }
+        }
+    });
+    assert!(v.connected().await);
+    let mut prev = v.audio_packet().await;
+    timeout(WAIT, async {
+        loop {
+            let p = v.audio_packet().await;
+            if p.seq != prev.seq + 1 {
+                assert!(p.seq > prev.seq, "audio went backwards");
+                break;
+            }
+            prev = p;
+        }
+    })
+    .await
+    .expect("audio never skipped ahead");
+    // Both streams keep flowing after the skip.
+    for _ in 0..5 {
+        v.audio_packet().await;
+    }
+    while v.frames.try_recv().is_ok() {}
+    v.frame().await;
+    assert!(v.events.try_recv().is_err(), "session must not have ended");
+}
+
+/// A hand-rolled v2 broadcaster that opens a stream carrying `odd` before streaming video.
+async fn raw_broadcaster(odd: Vec<u8>) -> (SocketAddr, Fingerprint, JoinHandle<()>) {
+    let identity = Identity::generate().unwrap();
+    let endpoint = Endpoint::server(
+        tls::server_config(&identity).unwrap(),
+        "127.0.0.1:0".parse().unwrap(),
+    )
+    .unwrap();
+    let addr = endpoint.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let conn = endpoint.accept().await.unwrap().await.unwrap();
+        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+        let hello = read_msg::<_, ClientMsg>(&mut recv).await.unwrap();
+        assert!(matches!(hello, Some(ClientMsg::Hello { .. })));
+        write_msg(
+            &mut send,
+            &ServerMsg::Welcome {
+                broadcaster_name: "raw".into(),
+                audio: true,
+            },
+        )
+        .await
+        .unwrap();
+        let mut odd_stream = conn.open_uni().await.unwrap();
+        odd_stream.write_all(&odd).await.unwrap();
+        let mut video = conn.open_uni().await.unwrap();
+        write_stream_kind(&mut video, stream_kind::VIDEO)
+            .await
+            .unwrap();
+        for seq in 0.. {
+            let frame = VideoFrame {
+                seq,
+                capture_time_us: 0,
+                keyframe: seq == 0,
+                data: Bytes::from_static(&[7; 100]),
+            };
+            if write_frame(&mut video, &frame).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        drop((send, recv, odd_stream, endpoint));
+    });
+    (addr, identity.fingerprint(), task)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_broken_audio_stream_leaves_video_running() {
+    // Audio kind byte, then a header announcing a 65535-byte packet (over the limit).
+    let mut broken = vec![stream_kind::AUDIO];
+    broken.extend([0u8; 16]);
+    broken.extend(u16::MAX.to_le_bytes());
+    let (addr, fp, task) = raw_broadcaster(broken).await;
+    let client = ViewerClient::new().unwrap();
+    let mut v = TestViewer::watch(&client, addr, fp);
+    assert!(v.connected().await);
+    for _ in 0..20 {
+        v.frame().await;
+    }
+    assert!(v.audio.try_recv().is_err());
+    assert!(v.events.try_recv().is_err(), "session must not have ended");
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_streams_are_refused_and_video_still_plays() {
+    let (addr, fp, task) = raw_broadcaster(vec![42, 1, 2, 3]).await;
+    let client = ViewerClient::new().unwrap();
+    let mut v = TestViewer::watch(&client, addr, fp);
+    v.connected().await;
+    for _ in 0..20 {
+        v.frame().await;
+    }
+    assert!(v.events.try_recv().is_err(), "session must not have ended");
+    task.abort();
 }

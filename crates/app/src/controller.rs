@@ -32,6 +32,7 @@ fn start_server(
         name: name.to_owned(),
         max_viewers: MAX_VIEWERS,
         bind: SocketAddr::from(([0, 0, 0, 0], port)),
+        audio: false,
     };
     if let Some(port) = preferred_port.filter(|p| *p != 0) {
         match BroadcastServer::start(identity, options(port), on_keyframe_request.clone()) {
@@ -313,6 +314,7 @@ impl Controller {
             target.fingerprint,
             self.display_name.clone(),
             move |frame| decoder.push(frame),
+            |_| {},
             move |id, event| emit(Event::Session(id, event)),
         );
         let _ = requester.set(Box::new(session.keyframe_requester()));

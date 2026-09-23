@@ -3,13 +3,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use quinn::{Connection, ConnectionError, Endpoint, VarInt};
+use quinn::{Connection, ConnectionError, Endpoint, RecvStream, VarInt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_frame, read_msg, write_msg,
+    AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_audio, read_frame,
+    read_msg, read_stream_kind, stream_kind, write_msg,
 };
 use crate::{Fingerprint, NetError, tls};
 
@@ -37,9 +38,11 @@ pub enum SessionEnd {
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
     /// `remote` is the broadcaster address that answered (the first reachable one tried).
+    /// `audio` says whether the broadcaster shares audio in this broadcast.
     Connected {
         broadcaster_name: String,
         remote: SocketAddr,
+        audio: bool,
     },
     Ended(SessionEnd),
 }
@@ -100,13 +103,15 @@ impl ViewerClient {
     }
 
     /// Connects to the broadcaster at the first reachable address whose certificate matches
-    /// `fingerprint`. Frames are handed to `on_frame` in order; `on_event` reports progress.
+    /// `fingerprint`. Frames are handed to `on_frame` in order, audio packets (if the broadcaster
+    /// shares audio) to `on_audio` in order; `on_event` reports progress.
     pub fn watch(
         &self,
         addrs: Vec<SocketAddr>,
         fingerprint: Fingerprint,
         viewer_name: String,
         on_frame: impl FnMut(VideoFrame) + Send + 'static,
+        on_audio: impl FnMut(AudioPacket) + Send + 'static,
         on_event: impl Fn(SessionId, SessionEvent) + Send + Sync + 'static,
     ) -> SessionHandle {
         let id = SessionId(self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -125,6 +130,7 @@ impl ViewerClient {
                 fingerprint,
                 viewer_name,
                 on_frame,
+                on_audio,
                 &events,
                 keyframes_rx,
                 cancel_rx,
@@ -149,6 +155,7 @@ async fn run(
     fingerprint: Fingerprint,
     viewer_name: String,
     mut on_frame: impl FnMut(VideoFrame),
+    on_audio: impl FnMut(AudioPacket) + Send + 'static,
     events: &impl Fn(SessionEvent),
     keyframes: mpsc::UnboundedReceiver<()>,
     mut cancel: oneshot::Receiver<()>,
@@ -168,7 +175,15 @@ async fn run(
             conn.close(VarInt::from_u32(close::VIEWER_LEFT), b"bye");
         })
     };
-    let end = session(&conn, viewer_name, &mut on_frame, events, keyframes).await;
+    let end = session(
+        &conn,
+        viewer_name,
+        &mut on_frame,
+        on_audio,
+        events,
+        keyframes,
+    )
+    .await;
     closer.abort();
     end
 }
@@ -207,6 +222,7 @@ async fn session(
     conn: &Connection,
     viewer_name: String,
     on_frame: &mut impl FnMut(VideoFrame),
+    on_audio: impl FnMut(AudioPacket) + Send + 'static,
     events: &impl Fn(SessionEvent),
     mut keyframes: mpsc::UnboundedReceiver<()>,
 ) -> SessionEnd {
@@ -227,10 +243,17 @@ async fn session(
         Ok::<_, String>((send, welcome))
     };
     let mut send = match timeout(HANDSHAKE_TIMEOUT, handshake).await {
-        Ok(Ok((send, Some(ServerMsg::Welcome { broadcaster_name })))) => {
+        Ok(Ok((
+            send,
+            Some(ServerMsg::Welcome {
+                broadcaster_name,
+                audio,
+            }),
+        ))) => {
             events(SessionEvent::Connected {
                 broadcaster_name,
                 remote: conn.remote_address(),
+                audio,
             });
             send
         }
@@ -249,13 +272,68 @@ async fn session(
         }
     });
 
-    if let Ok(Ok(mut video)) = timeout(HANDSHAKE_TIMEOUT, conn.accept_uni()).await {
+    let (video_tx, video_rx) = oneshot::channel();
+    let router = tokio::spawn(route_streams(conn.clone(), video_tx, on_audio));
+    if let Ok(Ok(mut video)) = timeout(HANDSHAKE_TIMEOUT, video_rx).await {
         while let Ok(Some(frame)) = read_frame(&mut video).await {
             on_frame(frame);
         }
     }
+    router.abort();
     requests.abort();
     end_reason(conn).await
+}
+
+/// Aborts a task when dropped, so it can't outlive the task that owns it.
+struct AbortOnDrop(JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Hands the video stream to the session and plays the audio stream into `on_audio`.
+/// Only the video stream decides when a session ends; a broken audio stream just goes quiet,
+/// and anything else the broadcaster opens is refused.
+async fn route_streams(
+    conn: Connection,
+    video: oneshot::Sender<RecvStream>,
+    on_audio: impl FnMut(AudioPacket) + Send + 'static,
+) {
+    let mut video = Some(video);
+    let mut on_audio = Some(on_audio);
+    let mut _audio = None;
+    while let Ok(mut stream) = conn.accept_uni().await {
+        let kind = timeout(HANDSHAKE_TIMEOUT, read_stream_kind(&mut stream)).await;
+        match kind {
+            Ok(Ok(Some(stream_kind::VIDEO))) if video.is_some() => {
+                if let Some(tx) = video.take() {
+                    let _ = tx.send(stream);
+                }
+            }
+            Ok(Ok(Some(stream_kind::AUDIO))) if on_audio.is_some() => {
+                if let Some(mut on_audio) = on_audio.take() {
+                    _audio = Some(AbortOnDrop(tokio::spawn(async move {
+                        loop {
+                            match read_audio(&mut stream).await {
+                                Ok(Some(packet)) => on_audio(packet),
+                                Ok(None) => break,
+                                Err(e) => {
+                                    tracing::warn!("audio stream failed: {e}");
+                                    break;
+                                }
+                            }
+                        }
+                    })));
+                }
+            }
+            other => {
+                tracing::debug!(?other, "refusing an unexpected stream");
+                let _ = stream.stop(VarInt::from_u32(close::PROTOCOL_ERROR));
+            }
+        }
+    }
 }
 
 async fn end_reason(conn: &Connection) -> SessionEnd {
