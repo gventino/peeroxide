@@ -6,7 +6,7 @@ Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the 
 
 Versions 0.3 and later can't talk to 0.2 or earlier (released as "P2P Screen Share"): the protocol and discovery names changed with the rename, so everyone needs to update.
 
-Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md)
+Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md)
 
 ## Using it
 
