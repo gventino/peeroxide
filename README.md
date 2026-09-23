@@ -113,7 +113,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-Automated tests (45) cover:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux. It hasn't run yet because the repository is local only; it's the quickest way to compile-check the macOS/Linux code once the repo is hosted.
+
+Automated tests (48) cover:
 - the wire protocol, including malformed and oversized input;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch, lagging viewers, switching, unreachable peers;

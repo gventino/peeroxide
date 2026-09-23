@@ -9,6 +9,7 @@ use std::time::Instant;
 use scap::capturer::{Capturer, Options};
 use scap::frame::{Frame as ScapFrame, FrameType};
 
+use crate::pixels::{self, Layout};
 use crate::slot::FrameSlot;
 use crate::{CaptureError, CaptureOptions, CloseReason, Frame, Source, SourceKind, Target};
 
@@ -119,38 +120,20 @@ fn run(
 }
 
 fn to_bgra(frame: ScapFrame) -> Option<Frame> {
-    let (w, h, data, swap_rb) = match frame {
-        ScapFrame::BGRA(f) => (f.width, f.height, f.data, false),
-        ScapFrame::BGRx(f) => (f.width, f.height, f.data, false),
-        ScapFrame::BGR0(f) => (f.width, f.height, f.data, false),
-        ScapFrame::RGBx(f) => (f.width, f.height, f.data, true),
-        _ => return None,
+    let (w, h, data, layout) = match frame {
+        ScapFrame::BGRA(f) => (f.width, f.height, f.data, Layout::Bgrx),
+        ScapFrame::BGRx(f) => (f.width, f.height, f.data, Layout::Bgrx),
+        ScapFrame::BGR0(f) => (f.width, f.height, f.data, Layout::Bgrx),
+        ScapFrame::RGBx(f) => (f.width, f.height, f.data, Layout::Rgbx),
+        ScapFrame::XBGR(f) => (f.width, f.height, f.data, Layout::Xbgr),
+        ScapFrame::RGB(f) => (f.width, f.height, f.data, Layout::Rgb),
+        ScapFrame::YUVFrame(_) => return None,
     };
-    let (w, h) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
-    let row = w as usize * 4;
-    if w == 0 || h == 0 || data.len() < row * h as usize {
-        return None;
-    }
-    // PipeWire buffers can carry row padding; derive the stride from the buffer size.
-    let stride = (data.len() / h as usize).max(row);
-    let mut packed = Vec::with_capacity(row * h as usize);
-    for y in 0..h as usize {
-        let start = y * stride;
-        let Some(src) = data.get(start..start + row) else {
-            return None;
-        };
-        packed.extend_from_slice(src);
-    }
-    for px in packed.chunks_exact_mut(4) {
-        if swap_rb {
-            px.swap(0, 2);
-        }
-        px[3] = 255;
-    }
+    let (width, height) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
     Some(Frame {
-        width: w,
-        height: h,
-        data: packed,
+        width,
+        height,
+        data: pixels::to_bgra(width, height, &data, layout)?,
         captured_at: Instant::now(),
     })
 }

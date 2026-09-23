@@ -1,5 +1,7 @@
 //! Screen capture: enumerate monitors/windows and stream BGRA frames from one of them.
 
+#[cfg(any(not(windows), test))]
+mod pixels;
 mod slot;
 mod test_pattern;
 
@@ -109,7 +111,10 @@ impl Default for CaptureOptions {
 pub enum CaptureError {
     #[error("screen capture is not supported on this system")]
     Unsupported,
-    #[error("screen recording permission was not granted")]
+    #[error(
+        "screen recording permission was not granted (on macOS: System Settings → Privacy & \
+         Security → Screen Recording, then restart the app)"
+    )]
     PermissionDenied,
     #[error("capture source is no longer available")]
     SourceNotFound,
