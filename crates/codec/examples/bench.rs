@@ -27,6 +27,7 @@ fn main() {
     let secs: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(5);
     let preset = match args.next().as_deref() {
         Some("720") => Preset::P720,
+        Some("internet") => Preset::INTERNET,
         _ => Preset::P1080,
     };
     if which == "scroll" {
@@ -121,6 +122,8 @@ fn scroll_stress(secs: u64, preset: &Preset) {
     let (mut t_enc, mut t_dec) = (Stage::default(), Stage::default());
     let (mut bytes, mut keyframes) = (0usize, 0u32);
     let started = Instant::now();
+    let interval = Duration::from_secs_f64(1.0 / f64::from(preset.fps));
+    let mut next_at = Instant::now();
     let mut n = 0u32;
     while started.elapsed() < Duration::from_secs(secs) {
         let off = ((n * 6) % (page_h - h)) as usize * w as usize * 4;
@@ -136,8 +139,18 @@ fn scroll_stress(secs: u64, preset: &Preset) {
             t_dec.add(t.elapsed());
         }
         n += 1;
+        next_at += interval;
+        match next_at.checked_duration_since(Instant::now()) {
+            Some(d) => std::thread::sleep(d),
+            None => next_at = Instant::now(),
+        }
     }
     report(started, &Stage::default(), &t_enc, &t_dec, bytes, keyframes);
+    let delivered = t_dec.1;
+    println!(
+        "delivered {delivered} of {n} frames ({:.1} fps after rate control)",
+        f64::from(delivered) / started.elapsed().as_secs_f64()
+    );
 }
 
 fn report(

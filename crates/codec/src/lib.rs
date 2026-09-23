@@ -30,7 +30,17 @@ impl Preset {
         fps: 30,
         bitrate_bps: 8_000_000,
     };
-    pub const ALL: [Self; 2] = [Self::P720, Self::P1080];
+    /// For links with limited upload, such as a virtual LAN over the internet. Rate control
+    /// raises the quantizer to stay near the budget; frames are never dropped, because a
+    /// frame-skipping encoder makes each surviving frame bigger and spirals down to ~1 fps.
+    pub const INTERNET: Self = Self {
+        name: "Internet / VPN · 720p · 20 fps",
+        max_width: 1280,
+        max_height: 720,
+        fps: 20,
+        bitrate_bps: 2_000_000,
+    };
+    pub const ALL: [Self; 3] = [Self::P720, Self::P1080, Self::INTERNET];
 }
 
 impl Default for Preset {

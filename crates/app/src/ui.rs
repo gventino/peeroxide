@@ -315,7 +315,19 @@ impl App {
                 .selected_text(self.preset.name)
                 .show_ui(ui, |ui| {
                     for p in Preset::ALL {
-                        ui.selectable_value(&mut self.preset, p, p.name);
+                        let hint = format!(
+                            "Up to {}x{}, about {} Mbps of upload{}",
+                            p.max_width,
+                            p.max_height,
+                            p.bitrate_bps / 1_000_000,
+                            if p == Preset::INTERNET {
+                                ". Recommended for Radmin VPN, Hamachi and other internet links."
+                            } else {
+                                ""
+                            }
+                        );
+                        ui.selectable_value(&mut self.preset, p, p.name)
+                            .on_hover_text(hint);
                     }
                 });
             if self.preset != before {

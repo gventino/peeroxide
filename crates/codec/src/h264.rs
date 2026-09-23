@@ -52,6 +52,24 @@ impl VideoEncoder for H264Encoder {
         width: u32,
         height: u32,
     ) -> Result<Option<EncodedFrame>, CodecError> {
+        let now_ms = self.started.elapsed().as_millis() as u64;
+        self.encode_at(bgra, width, height, now_ms)
+    }
+
+    fn request_keyframe(&mut self) {
+        self.want_keyframe = true;
+    }
+}
+
+impl H264Encoder {
+    /// Like [`VideoEncoder::encode`] with an explicit timestamp, which rate control uses.
+    fn encode_at(
+        &mut self,
+        bgra: &[u8],
+        width: u32,
+        height: u32,
+        timestamp_ms: u64,
+    ) -> Result<Option<EncodedFrame>, CodecError> {
         let (w, h) = (width as usize, height as usize);
         if w % 2 != 0 || h % 2 != 0 || bgra.len() < w * h * 4 {
             return Err(CodecError::InvalidInput(format!(
@@ -66,12 +84,12 @@ impl VideoEncoder for H264Encoder {
         yuv.read_bgra8(BgraSliceU8::new(&bgra[..w * h * 4], (w, h)));
 
         // The encoder initializes lazily on the first frame, which is always an IDR anyway.
+        // The request stays pending until an IDR actually comes out.
         if self.want_keyframe && self.initialized {
             self.inner.force_intra_frame();
         }
-        self.want_keyframe = false;
 
-        let ts = openh264::Timestamp::from_millis(self.started.elapsed().as_millis() as u64);
+        let ts = openh264::Timestamp::from_millis(timestamp_ms);
         let bitstream = self.inner.encode_at(&*yuv, ts).map_err(codec_err)?;
         self.initialized = true;
 
@@ -84,11 +102,10 @@ impl VideoEncoder for H264Encoder {
         if data.is_empty() {
             return Ok(None);
         }
+        if keyframe {
+            self.want_keyframe = false;
+        }
         Ok(Some(EncodedFrame { data, keyframe }))
-    }
-
-    fn request_keyframe(&mut self) {
-        self.want_keyframe = true;
     }
 }
 
@@ -161,6 +178,88 @@ mod tests {
             bitrate_bps: 2_000_000,
         })
         .unwrap()
+    }
+
+    const PAGE_W: u32 = 1280;
+    const PAGE_H: u32 = 720;
+
+    /// A 720p-wide page of pseudo-random "text" (18 px lines), three screens tall.
+    fn text_page() -> Vec<u8> {
+        let (w, h) = (PAGE_W, PAGE_H * 3);
+        let mut page = vec![255u8; (w * h * 4) as usize];
+        let mut seed = 0x2545_f491_u32;
+        for line in 0..h / 18 {
+            let mut x = 20;
+            while x + 12 < w - 20 {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                let glyph_w = 4 + seed % 9;
+                for gy in 0..11 {
+                    for gx in 0..glyph_w {
+                        if (seed >> ((gx + gy) % 31)) & 1 == 1 {
+                            let i = (((line * 18 + gy + 3) * w + x + gx) * 4) as usize;
+                            page[i..i + 3].copy_from_slice(&[20, 20, 20]);
+                        }
+                    }
+                }
+                x += glyph_w + 2 + u32::from(seed.is_multiple_of(7)) * 8;
+            }
+        }
+        page
+    }
+
+    /// Frame `n` of the page scrolling 6 px per frame, like a user scrolling a document.
+    fn scrolled(page: &[u8], n: u32) -> &[u8] {
+        let row = (PAGE_W * 4) as usize;
+        let offset = ((n * 6) % (PAGE_H * 2)) as usize * row;
+        &page[offset..offset + row * PAGE_H as usize]
+    }
+
+    /// Encodes `frames` frames at the preset's frame rate; returns (bits per second, frame kinds).
+    fn encode_scroll(
+        preset: &Preset,
+        frames: u32,
+        keyframe_at: Option<u32>,
+    ) -> (f64, Vec<Option<bool>>) {
+        let page = text_page();
+        let mut enc = H264Encoder::new(preset).unwrap();
+        let interval_ms = 1000 / u64::from(preset.fps);
+        let (mut bytes, mut kinds) = (0usize, Vec::new());
+        for n in 0..frames {
+            if keyframe_at == Some(n) {
+                enc.request_keyframe();
+            }
+            let out = enc
+                .encode_at(
+                    scrolled(&page, n),
+                    PAGE_W,
+                    PAGE_H,
+                    u64::from(n) * interval_ms,
+                )
+                .unwrap();
+            bytes += out.as_ref().map_or(0, |f| f.data.len());
+            kinds.push(out.map(|f| f.keyframe));
+        }
+        let seconds = f64::from(frames) / f64::from(preset.fps);
+        (bytes as f64 * 8.0 / seconds, kinds)
+    }
+
+    /// Ten seconds of scrolling text: the budget holds and every frame is still delivered.
+    #[test]
+    fn internet_budget_holds_on_scrolling_text() {
+        let preset = Preset::INTERNET;
+        let (bps, kinds) = encode_scroll(&preset, 200, None);
+        let budget = f64::from(preset.bitrate_bps);
+        assert!(bps < budget * 1.5, "{bps:.0} bps vs budget {budget:.0}");
+        assert!(kinds.iter().all(Option::is_some), "no frame may be dropped");
+    }
+
+    #[test]
+    fn keyframe_request_mid_stream_is_honored_immediately() {
+        let (_, kinds) = encode_scroll(&Preset::INTERNET, 30, Some(20));
+        assert_eq!(kinds[20], Some(true), "{kinds:?}");
+        assert!(kinds[21..].iter().all(|k| *k == Some(false)));
     }
 
     #[test]
