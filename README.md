@@ -52,8 +52,13 @@ p2pss --profile b --name Bob --watch alice
 ### Network requirements
 
 - Peers must be on the same subnet (mDNS does not cross routers). Discovery uses UDP port 5353 (multicast); video uses one random UDP port per broadcaster.
-- **Windows:** the first broadcast triggers a Windows Defender Firewall prompt. Allow it on **private** networks. If your network is set to *Public*, discovery and incoming connections are blocked; switch it to *Private* in Settings → Network.
-- If discovery is blocked (e.g. guest Wi-Fi with client isolation), use **Connect manually** with the broadcaster's connect string.
+- Virtual LANs such as Hamachi or Radmin VPN work like a LAN: the broadcaster is reachable on the adapter's address (25.x / 26.x). Whether discovery works depends on the VPN forwarding multicast. When it doesn't, use the connect string. Over the internet, prefer the 720p preset.
+- **Windows firewall:** the first run triggers a Windows Defender Firewall prompt. Allow the app on every network type you will use. Virtual LAN adapters (and many home networks) are classified *Public*, so tick **Public** too; otherwise discovery and incoming connections are blocked.
+- If discovery is blocked (e.g. guest Wi-Fi with client isolation, some VPNs), the broadcaster uses **Copy connect string ▾**, picks the network adapter the viewer shares with them, and the viewer pastes the string into **Connect manually**.
+
+### Distributing a Windows build
+
+`.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/p2pss.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The binary isn't code-signed, so SmartScreen shows "Windows protected your PC" on first run (More info → Run anyway).
 
 ## Architecture
 

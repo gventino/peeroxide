@@ -1,6 +1,6 @@
 //! Owns the networking runtime and wires capture/encode → server and client → decode.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -19,6 +19,22 @@ use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
 use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
 
 pub const MAX_VIEWERS: usize = 8;
+
+/// Usable IPv4 addresses per network adapter (LAN, and virtual LANs such as Hamachi or Radmin).
+pub fn local_ipv4s() -> Vec<(String, Ipv4Addr)> {
+    let mut out: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| i.is_oper_up() && !i.is_loopback() && !i.is_link_local())
+        .filter_map(|i| match i.ip() {
+            IpAddr::V4(ip) => Some((i.name, ip)),
+            IpAddr::V6(_) => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
 
 pub enum Event {
     ViewerCount(usize),
@@ -206,6 +222,11 @@ impl Controller {
             "broadcast started; dev connect string: --connect 127.0.0.1:{port}#{}",
             self.identity.fingerprint().to_hex()
         );
+        let reachable: Vec<String> = local_ipv4s()
+            .into_iter()
+            .map(|(adapter, ip)| format!("{adapter} {ip}:{port}"))
+            .collect();
+        tracing::info!("reachable at: {}", reachable.join(", "));
         if let Some(d) = &mut self.discovery
             && let Err(e) = d.announce(&self.display_name, port)
         {

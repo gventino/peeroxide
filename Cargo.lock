@@ -3111,6 +3111,7 @@ dependencies = [
  "directories",
  "eframe",
  "gethostname",
+ "if-addrs",
  "p2pss-capture",
  "p2pss-codec",
  "p2pss-discovery",

@@ -1,3 +1,6 @@
+// Release builds are GUI apps on Windows (no console window); logs still go to the log file.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod controller;
 mod decoder;
 mod encoder;

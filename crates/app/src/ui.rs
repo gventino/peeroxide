@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use p2pss_discovery::Peer;
 use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
-use crate::controller::{Controller, Event, PeerTarget};
+use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
 use crate::settings::Settings;
 use crate::video::VideoView;
@@ -304,17 +304,27 @@ impl App {
                     r.fps, r.kbps, r.avg_ms
                 ));
             }
-            let ip = lan_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-            let connect = format!("{ip}:{}#{}", b.port, self.ctrl.fingerprint().to_hex());
+            let (port, fingerprint) = (b.port, self.ctrl.fingerprint().to_hex());
             ui.horizontal(|ui| {
-                ui.weak(format!("UDP port {}", b.port));
-                if ui
-                    .small_button("Copy connect string")
-                    .on_hover_text(&connect)
-                    .clicked()
-                {
-                    ui.ctx().copy_text(connect.clone());
-                }
+                ui.weak(format!("UDP port {port}"));
+                ui.menu_button("Copy connect string ▾", |ui| {
+                    ui.weak("For viewers who can't see you in the list.\nPick the network they share with you:");
+                    let adapters = local_ipv4s();
+                    if adapters.is_empty() {
+                        ui.weak("No network adapters found");
+                    }
+                    for (adapter, ip) in adapters {
+                        let connect = format!("{ip}:{port}#{fingerprint}");
+                        if ui
+                            .button(format!("{adapter} · {ip}"))
+                            .on_hover_text(&connect)
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(connect);
+                            ui.close();
+                        }
+                    }
+                });
             });
             ui.add_space(4.0);
             if ui.button("■ Stop broadcasting").clicked() {
@@ -509,13 +519,6 @@ pub fn parse_connect(s: &str) -> Result<PeerTarget, String> {
         name: fingerprint.short(),
         addrs: vec![addr],
     })
-}
-
-/// The address this machine would use to reach the LAN. `connect` on UDP sends no packets.
-fn lan_ip() -> Option<IpAddr> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("192.0.2.1:9").ok()?;
-    Some(socket.local_addr().ok()?.ip())
 }
 
 fn find_source(sources: &[Source], query: &str) -> Option<usize> {
