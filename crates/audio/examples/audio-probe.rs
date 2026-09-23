@@ -1,5 +1,5 @@
 //! Records a few seconds of an audio source into a WAV file and checks the output device.
-//! Usage: cargo run -p peeroxide-audio --example probe [system|tone|PID] [seconds] [--play]
+//! Usage: cargo run -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]
 //!
 //! * `system`: everything this computer plays except this probe; `PID`: only that process tree.
 //! * Writes `audio-probe.wav` (16-bit stereo, 48 kHz) and prints the peak level every second.

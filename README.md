@@ -43,6 +43,18 @@ cargo build --release
 
 The result is a single self-contained executable.
 
+### Common tasks
+
+The [`Justfile`](Justfile) wraps the usual commands; install [just](https://just.systems) with `cargo install just` (or `winget install Casey.Just`) and run `just` to list them. The main ones:
+
+| Command | Does |
+|---|---|
+| `just run <options>` | Run the app, e.g. `just run --profile a --broadcast test --share-audio`. |
+| `just demo` | Two instances on this machine: Alice broadcasts the test pattern with sound, Bob watches. |
+| `just check` | What CI checks: formatting, clippy (warnings as errors) and the tests. |
+| `just package [label]` | Windows: release build plus quickstart, zipped into `dist/peeroxide-<version>[-<label>]-windows-x64.zip`. |
+| `just probe-audio`, `just probe-capture`, `just bench` | The developer tools listed under Testing. |
+
 ### Command-line options
 
 | Option | Purpose |
@@ -155,7 +167,7 @@ Automated tests (91) cover:
 - the viewer state machine against the use-case diagram;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
 
-Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]` and `cargo run --release -p peeroxide-audio --example probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device).
+Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]` and `cargo run --release -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device).
 
 ### Manual checklist
 
