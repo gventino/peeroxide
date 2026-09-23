@@ -1,43 +1,53 @@
-use std::sync::{Arc, Mutex};
+use std::net::SocketAddr;
 use std::time::Duration;
 
-use eframe::egui;
+use eframe::egui::{self, Color32, RichText};
 use p2pss_capture::{Source, SourceKind, list_sources};
 use p2pss_codec::Preset;
+use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
-use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
-use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
+use crate::controller::{Controller, Event, PeerTarget};
+use crate::encoder::EncoderEnd;
 use crate::video::VideoView;
+use crate::viewer_state::{PeerRef, ViewerInput, ViewerState, describe};
 
-/// Local capture → encode → decode → display, without networking.
-struct Loopback {
-    encoder: EncoderPipeline,
-    decoder_stats: Arc<Mutex<DecoderStats>>,
-    ended: Arc<Mutex<Option<EncoderEnd>>>,
-}
+const LIVE_RED: Color32 = Color32::from_rgb(230, 70, 70);
 
 pub struct App {
+    ctrl: Controller,
     sources: Vec<Source>,
     selected: usize,
     preset: Preset,
-    loopback: Option<Loopback>,
-    slot: Arc<VideoSlot>,
+    viewer_count: usize,
+    broadcast_note: Option<String>,
+    viewer: ViewerState,
+    session: Option<SessionId>,
+    connect_input: String,
+    watch_note: Option<String>,
     video: VideoView,
-    status: Option<String>,
     autostart: bool,
 }
 
 impl App {
-    pub fn new(args: Args) -> Self {
+    pub fn new(
+        args: Args,
+        identity: Identity,
+        display_name: String,
+        ctx: egui::Context,
+    ) -> anyhow::Result<Self> {
         let mut app = Self {
+            ctrl: Controller::new(identity, display_name, ctx)?,
             sources: Vec::new(),
             selected: 0,
             preset: Preset::default(),
-            loopback: None,
-            slot: Arc::new(VideoSlot::default()),
+            viewer_count: 0,
+            broadcast_note: None,
+            viewer: ViewerState::Idle,
+            session: None,
+            connect_input: String::new(),
+            watch_note: None,
             video: VideoView::default(),
-            status: None,
             autostart: false,
         };
         app.refresh_sources();
@@ -47,10 +57,17 @@ impl App {
                     app.selected = i;
                     app.autostart = true;
                 }
-                None => app.status = Some(format!("No source matches \"{query}\"")),
+                None => app.broadcast_note = Some(format!("No source matches \"{query}\"")),
             }
         }
-        app
+        if let Some(connect) = &args.connect {
+            app.connect_input = connect.clone();
+            match parse_connect(connect) {
+                Ok(target) => app.watch(target),
+                Err(e) => app.watch_note = Some(e),
+            }
+        }
+        Ok(app)
     }
 
     fn refresh_sources(&mut self) {
@@ -58,7 +75,7 @@ impl App {
         let mut sources = match list_sources() {
             Ok(s) => s,
             Err(e) => {
-                self.status = Some(format!("Could not list sources: {e}"));
+                self.broadcast_note = Some(format!("Could not list sources: {e}"));
                 Vec::new()
             }
         };
@@ -69,167 +86,299 @@ impl App {
         self.sources = sources;
     }
 
-    fn start(&mut self, ctx: &egui::Context) {
+    fn start_broadcast(&mut self) {
         let Some(source) = self.sources.get(self.selected).cloned() else {
             return;
         };
-        let control = EncoderControl::new(true);
-        let repaint = {
-            let ctx = ctx.clone();
-            Arc::new(move || ctx.request_repaint())
-        };
-        let need_keyframe = {
-            let control = control.clone();
-            Arc::new(move || control.request_keyframe())
-        };
-        let mut decoder = DecoderPipeline::start(self.slot.clone(), repaint, need_keyframe);
-        let decoder_stats = decoder.stats.clone();
-        let ended = Arc::new(Mutex::new(None));
-        let encoder = EncoderPipeline::start(
-            control,
-            source,
-            self.preset,
-            move |packet| decoder.push(packet),
-            {
-                let ended = ended.clone();
-                let ctx = ctx.clone();
-                move |end| {
-                    *ended.lock().unwrap() = Some(end);
-                    ctx.request_repaint();
-                }
-            },
-        );
-        self.status = None;
-        self.loopback = Some(Loopback {
-            encoder,
-            decoder_stats,
-            ended,
-        });
+        self.broadcast_note = None;
+        self.viewer_count = 0;
+        if let Err(e) = self.ctrl.start_broadcast(source, self.preset) {
+            self.broadcast_note = Some(format!("Could not start broadcasting: {e}"));
+        }
     }
 
-    fn stop(&mut self) {
-        self.loopback = None;
-        self.slot.take();
+    fn watch(&mut self, target: PeerTarget) {
+        self.watch_note = None;
         self.video.clear();
+        self.viewer = self.viewer.transition(ViewerInput::Select(PeerRef {
+            fingerprint: target.fingerprint,
+            name: target.name.clone(),
+        }));
+        self.session = Some(self.ctrl.watch(target));
     }
 
-    fn overlay(&self) -> String {
-        let Some(lb) = &self.loopback else {
+    fn apply(&mut self, input: ViewerInput) {
+        self.viewer = self.viewer.transition(input);
+        if !self.viewer.wants_session() && self.session.take().is_some() {
+            self.ctrl.stop_watching();
+            self.video.clear();
+        }
+    }
+
+    fn handle_events(&mut self) {
+        while let Ok(event) = self.ctrl.events.try_recv() {
+            match event {
+                Event::ViewerCount(n) => self.viewer_count = n,
+                Event::BroadcastEnded { generation, end } => {
+                    let current = self.ctrl.broadcast.as_ref().map(|b| b.generation);
+                    if current != Some(generation) || end == EncoderEnd::Stopped {
+                        continue;
+                    }
+                    let (reason, note) = match end {
+                        EncoderEnd::SourceClosed => (
+                            StopReason::SourceClosed,
+                            "The shared source was closed".to_string(),
+                        ),
+                        EncoderEnd::Failed(e) => {
+                            (StopReason::Stopped, format!("Capture failed: {e}"))
+                        }
+                        EncoderEnd::Stopped => unreachable!(),
+                    };
+                    self.ctrl.stop_broadcast(reason);
+                    self.viewer_count = 0;
+                    self.broadcast_note = Some(note);
+                }
+                Event::Session(id, event) => {
+                    if self.session != Some(id) {
+                        continue;
+                    }
+                    let input = match event {
+                        SessionEvent::Connected { broadcaster_name } => {
+                            ViewerInput::Connected { broadcaster_name }
+                        }
+                        SessionEvent::Ended(end) => {
+                            if matches!(self.viewer, ViewerState::Connecting { .. }) {
+                                self.watch_note = Some(describe(&end));
+                            }
+                            ViewerInput::Ended(end)
+                        }
+                    };
+                    self.apply(input);
+                }
+            }
+        }
+    }
+
+    fn broadcast_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Broadcast");
+        ui.add_space(4.0);
+        let live = self.ctrl.broadcast.is_some();
+        ui.add_enabled_ui(!live, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Source");
+                if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+                    self.refresh_sources();
+                }
+            });
+            let current = self
+                .sources
+                .get(self.selected)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            egui::ComboBox::from_id_salt("source")
+                .width(ui.available_width())
+                .selected_text(truncate(&current, 38))
+                .show_ui(ui, |ui| {
+                    for (i, s) in self.sources.iter().enumerate() {
+                        let icon = match s.kind {
+                            SourceKind::Monitor => "🖥",
+                            SourceKind::Window => "🗔",
+                            SourceKind::TestPattern => "▦",
+                        };
+                        ui.selectable_value(
+                            &mut self.selected,
+                            i,
+                            format!("{icon} {}", truncate(&s.name, 60)),
+                        );
+                    }
+                });
+            ui.label("Quality");
+            egui::ComboBox::from_id_salt("preset")
+                .width(ui.available_width())
+                .selected_text(self.preset.name)
+                .show_ui(ui, |ui| {
+                    for p in Preset::ALL {
+                        ui.selectable_value(&mut self.preset, p, p.name);
+                    }
+                });
+        });
+        ui.add_space(6.0);
+
+        if let Some(b) = &self.ctrl.broadcast {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("● LIVE").color(LIVE_RED).strong());
+                let n = self.viewer_count;
+                ui.label(format!("{n} viewer{}", if n == 1 { "" } else { "s" }));
+            });
+            ui.label(format!("Sharing {}", truncate(&b.source_name, 40)));
+            if self.viewer_count == 0 {
+                ui.weak("Capture paused until someone watches");
+            } else {
+                let mut stats = b.encoder.stats.lock().unwrap();
+                let r = stats.meter.rates();
+                let size = stats
+                    .canvas
+                    .map(|(w, h)| format!("{w}x{h} · "))
+                    .unwrap_or_default();
+                ui.weak(format!(
+                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms",
+                    r.fps, r.kbps, r.avg_ms
+                ));
+            }
+            let connect = format!("127.0.0.1:{}#{}", b.port, self.ctrl.fingerprint().to_hex());
+            ui.horizontal(|ui| {
+                ui.weak(format!("UDP port {}", b.port));
+                if ui
+                    .small_button("Copy connect string")
+                    .on_hover_text(&connect)
+                    .clicked()
+                {
+                    ui.ctx().copy_text(connect.clone());
+                }
+            });
+            ui.add_space(4.0);
+            if ui.button("■ Stop broadcasting").clicked() {
+                self.ctrl.stop_broadcast(StopReason::Stopped);
+                self.viewer_count = 0;
+            }
+        } else if ui.button("▶ Start broadcasting").clicked() {
+            self.start_broadcast();
+        }
+        if let Some(note) = &self.broadcast_note {
+            ui.colored_label(ui.visuals().warn_fg_color, note);
+        }
+    }
+
+    fn watch_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Watch");
+        ui.add_space(4.0);
+        ui.label("Connect to (IP:PORT#FINGERPRINT)");
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut self.connect_input)
+                .desired_width(ui.available_width())
+                .hint_text("192.168.0.10:50123#3f9a…"),
+        );
+        let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if ui.button("Watch").clicked() || submitted {
+            match parse_connect(&self.connect_input) {
+                Ok(target) => self.watch(target),
+                Err(e) => self.watch_note = Some(e),
+            }
+        }
+        ui.add_space(6.0);
+
+        match self.viewer.clone() {
+            ViewerState::Idle => {
+                ui.weak("Not watching");
+            }
+            ViewerState::Connecting { peer } => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Connecting to {}…", peer.name));
+                });
+                if ui.button("Cancel").clicked() {
+                    self.apply(ViewerInput::StopWatching);
+                }
+            }
+            ViewerState::Streaming {
+                broadcaster_name, ..
+            } => {
+                ui.label(format!("Watching {broadcaster_name}"));
+                if ui.button("■ Stop watching").clicked() {
+                    self.apply(ViewerInput::StopWatching);
+                }
+            }
+            ViewerState::Disconnected { reason, .. } => {
+                ui.colored_label(ui.visuals().warn_fg_color, reason);
+                if ui.button("OK").clicked() {
+                    self.apply(ViewerInput::Acknowledge);
+                }
+            }
+        }
+        if let Some(note) = &self.watch_note {
+            ui.colored_label(ui.visuals().warn_fg_color, note);
+        }
+    }
+
+    fn watch_overlay(&self) -> String {
+        let Some(w) = &self.ctrl.watching else {
             return String::new();
         };
-        let mut enc = lb.encoder.stats.lock().unwrap();
-        let e = enc.meter.rates();
-        let canvas = enc
-            .canvas
-            .map(|(w, h)| format!("{w}x{h}"))
-            .unwrap_or_else(|| "-".into());
-        drop(enc);
-        let mut dec = lb.decoder_stats.lock().unwrap();
-        let d = dec.meter.rates();
-        let latency = dec
+        let mut s = w.decoder_stats.lock().unwrap();
+        let r = s.meter.rates();
+        let latency = s
             .latency_ms
-            .map(|l| format!("{l:.0} ms"))
-            .unwrap_or_else(|| "-".into());
+            .map(|l| format!("\ncapture→decode {l:.0} ms (valid only on the same machine)"))
+            .unwrap_or_default();
         format!(
-            "{canvas}  encode {:.1} fps {:.1} ms  {:.0} kbps\n\
-             decode {:.1} fps {:.1} ms  latency {latency}  dropped {}",
-            e.fps, e.avg_ms, e.kbps, d.fps, d.avg_ms, dec.dropped
+            "{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}",
+            r.fps, r.kbps, r.avg_ms, s.dropped
         )
     }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
         if std::mem::take(&mut self.autostart) {
-            self.start(&ctx);
+            self.start_broadcast();
         }
-        let ended = self
-            .loopback
-            .as_ref()
-            .and_then(|lb| lb.ended.lock().unwrap().take());
-        if let Some(end) = ended {
-            self.stop();
-            self.status = Some(match end {
-                EncoderEnd::Stopped => "Stopped".into(),
-                EncoderEnd::SourceClosed => "Source closed".into(),
-                EncoderEnd::Failed(e) => format!("Capture failed: {e}"),
+        self.handle_events();
+        if self.ctrl.broadcast.is_some() || self.ctrl.watching.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(500));
+        }
+
+        egui::Panel::top("identity").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(self.ctrl.display_name()).strong());
+                ui.weak(format!("ID {}", self.ctrl.fingerprint().short()))
+                    .on_hover_text(
+                        "Your fingerprint. Viewers see it next to your name and can compare it \
+                         with you to rule out impersonation.",
+                    );
             });
-        }
+        });
 
         egui::Panel::left("controls")
             .resizable(false)
-            .exact_size(300.0)
+            .exact_size(320.0)
             .show(ui, |ui| {
                 ui.add_space(8.0);
-                ui.heading("Broadcast");
-                ui.label("Local loopback preview (no network yet)");
+                self.broadcast_ui(ui);
+                ui.add_space(12.0);
+                ui.separator();
                 ui.add_space(8.0);
-
-                let running = self.loopback.is_some();
-                ui.add_enabled_ui(!running, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Source");
-                        if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
-                            self.refresh_sources();
-                        }
-                    });
-                    let current = self
-                        .sources
-                        .get(self.selected)
-                        .map(|s| s.name.clone())
-                        .unwrap_or_default();
-                    egui::ComboBox::from_id_salt("source")
-                        .width(280.0)
-                        .selected_text(truncate(&current, 40))
-                        .show_ui(ui, |ui| {
-                            for (i, s) in self.sources.iter().enumerate() {
-                                let icon = match s.kind {
-                                    SourceKind::Monitor => "🖥",
-                                    SourceKind::Window => "🗔",
-                                    SourceKind::TestPattern => "▦",
-                                };
-                                ui.selectable_value(
-                                    &mut self.selected,
-                                    i,
-                                    format!("{icon} {}", truncate(&s.name, 60)),
-                                );
-                            }
-                        });
-                    ui.label("Quality");
-                    egui::ComboBox::from_id_salt("preset")
-                        .width(280.0)
-                        .selected_text(self.preset.name)
-                        .show_ui(ui, |ui| {
-                            for p in Preset::ALL {
-                                ui.selectable_value(&mut self.preset, p, p.name);
-                            }
-                        });
-                });
-                ui.add_space(8.0);
-                if running {
-                    if ui.button("■ Stop").clicked() {
-                        self.stop();
-                    }
-                } else if ui.button("▶ Start preview").clicked() {
-                    self.start(&ctx);
-                }
-                if let Some(s) = &self.status {
-                    ui.add_space(8.0);
-                    ui.colored_label(ui.visuals().warn_fg_color, s);
-                }
+                self.watch_ui(ui);
             });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.loopback.is_some() {
-                let overlay = self.overlay();
-                self.video.ui(ui, &self.slot, &overlay);
-                ctx.request_repaint_after(Duration::from_millis(500));
-            } else {
-                VideoView::placeholder(ui, "Pick a source and start the preview");
+        egui::CentralPanel::default().show(ui, |ui| match self.viewer.clone() {
+            ViewerState::Streaming { .. } => {
+                let overlay = self.watch_overlay();
+                self.video.ui(ui, &self.ctrl.video, &overlay);
             }
+            ViewerState::Connecting { peer } => {
+                VideoView::placeholder(ui, &format!("Connecting to {}…", peer.name));
+            }
+            ViewerState::Disconnected { peer, reason } => {
+                VideoView::placeholder(ui, &format!("{}: {reason}", peer.name));
+            }
+            ViewerState::Idle => VideoView::placeholder(ui, "Pick a broadcaster to watch"),
         });
     }
+}
+
+pub fn parse_connect(s: &str) -> Result<PeerTarget, String> {
+    let (addr, fp) = s
+        .trim()
+        .split_once('#')
+        .ok_or("Expected IP:PORT#FINGERPRINT")?;
+    let addr: SocketAddr = addr.trim().parse().map_err(|_| "Invalid IP:PORT")?;
+    let fingerprint = Fingerprint::from_hex(fp.trim())
+        .ok_or("Invalid fingerprint (expected 64 hex characters)")?;
+    Ok(PeerTarget {
+        fingerprint,
+        name: fingerprint.short(),
+        addrs: vec![addr],
+    })
 }
 
 fn find_source(sources: &[Source], query: &str) -> Option<usize> {
@@ -248,5 +397,30 @@ fn truncate(s: &str, max: usize) -> String {
         let mut t: String = s.chars().take(max - 1).collect();
         t.push('…');
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_connect_strings() {
+        let fp = Fingerprint::of(b"x");
+        let t = parse_connect(&format!(" 127.0.0.1:5000#{} ", fp.to_hex())).unwrap();
+        assert_eq!(
+            t.addrs,
+            vec!["127.0.0.1:5000".parse::<SocketAddr>().unwrap()]
+        );
+        assert_eq!(t.fingerprint, fp);
+        assert!(parse_connect("127.0.0.1:5000").is_err());
+        assert!(parse_connect(&format!("nonsense#{}", fp.to_hex())).is_err());
+        assert!(parse_connect("127.0.0.1:5000#abcd").is_err());
+    }
+
+    #[test]
+    fn truncates_on_char_boundaries() {
+        assert_eq!(truncate("héllo wörld", 5), "héll…");
+        assert_eq!(truncate("short", 10), "short");
     }
 }

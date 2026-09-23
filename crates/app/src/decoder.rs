@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use p2pss_codec::{DecodedFrame, H264Decoder, VideoDecoder};
 
-use crate::encoder::EncodedPacket;
 use crate::stats::Meter;
+use p2pss_net::VideoFrame;
 
 const QUEUE: usize = 8;
 
@@ -39,7 +39,7 @@ pub struct DecoderStats {
 type Callback = Arc<dyn Fn() + Send + Sync>;
 
 pub struct DecoderPipeline {
-    tx: Option<SyncSender<EncodedPacket>>,
+    tx: Option<SyncSender<VideoFrame>>,
     waiting_for_keyframe: bool,
     resync: Arc<AtomicBool>,
     need_keyframe: Callback,
@@ -49,7 +49,7 @@ pub struct DecoderPipeline {
 
 impl DecoderPipeline {
     pub fn start(output: Arc<VideoSlot>, on_frame: Callback, need_keyframe: Callback) -> Self {
-        let (tx, rx) = mpsc::sync_channel::<EncodedPacket>(QUEUE);
+        let (tx, rx) = mpsc::sync_channel::<VideoFrame>(QUEUE);
         let stats = Arc::new(Mutex::new(DecoderStats::default()));
         let resync = Arc::new(AtomicBool::new(false));
         let thread = std::thread::Builder::new()
@@ -100,7 +100,7 @@ impl DecoderPipeline {
     }
 
     /// Queues a packet. Never blocks: on overflow or after a decode error, drops until the next keyframe.
-    pub fn push(&mut self, packet: EncodedPacket) {
+    pub fn push(&mut self, packet: VideoFrame) {
         if self.resync.swap(false, Ordering::Relaxed) {
             self.waiting_for_keyframe = true;
         }

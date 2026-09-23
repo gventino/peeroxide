@@ -1,0 +1,251 @@
+//! Owns the networking runtime and wires capture/encode → server and client → decode.
+
+use std::net::SocketAddr;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use eframe::egui;
+use p2pss_capture::Source;
+use p2pss_codec::Preset;
+use p2pss_net::{
+    BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
+    StopReason, ViewerClient,
+};
+use tokio::runtime::Runtime;
+use tokio::task::JoinHandle;
+
+use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
+use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
+
+pub const MAX_VIEWERS: usize = 8;
+
+pub enum Event {
+    ViewerCount(usize),
+    /// The encoder stopped on its own (source closed or capture failed) for broadcast `generation`.
+    BroadcastEnded {
+        generation: u64,
+        end: EncoderEnd,
+    },
+    Session(SessionId, SessionEvent),
+}
+
+#[derive(Clone, Debug)]
+pub struct PeerTarget {
+    pub fingerprint: Fingerprint,
+    pub name: String,
+    pub addrs: Vec<SocketAddr>,
+}
+
+pub struct Broadcast {
+    pub generation: u64,
+    pub port: u16,
+    pub source_name: String,
+    pub encoder: EncoderPipeline,
+    server: Arc<BroadcastServer>,
+    viewers_task: JoinHandle<()>,
+}
+
+pub struct Watching {
+    _session: SessionHandle,
+    pub decoder_stats: Arc<Mutex<DecoderStats>>,
+}
+
+pub struct Controller {
+    rt: Runtime,
+    identity: Identity,
+    display_name: String,
+    client: ViewerClient,
+    ctx: egui::Context,
+    events_tx: Sender<Event>,
+    pub events: Receiver<Event>,
+    pub video: Arc<VideoSlot>,
+    pub broadcast: Option<Broadcast>,
+    pub watching: Option<Watching>,
+    generation: u64,
+}
+
+impl Controller {
+    pub fn new(
+        identity: Identity,
+        display_name: String,
+        ctx: egui::Context,
+    ) -> anyhow::Result<Self> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("net")
+            .enable_all()
+            .build()?;
+        let client = {
+            let _guard = rt.enter();
+            ViewerClient::new()?
+        };
+        let (events_tx, events) = channel();
+        Ok(Self {
+            rt,
+            identity,
+            display_name,
+            client,
+            ctx,
+            events_tx,
+            events,
+            video: Arc::new(VideoSlot::default()),
+            broadcast: None,
+            watching: None,
+            generation: 0,
+        })
+    }
+
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.identity.fingerprint()
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn emitter(&self) -> impl Fn(Event) + Send + Sync + Clone + 'static {
+        let tx = self.events_tx.clone();
+        let ctx = self.ctx.clone();
+        move |e| {
+            let _ = tx.send(e);
+            ctx.request_repaint();
+        }
+    }
+
+    pub fn start_broadcast(&mut self, source: Source, preset: Preset) -> anyhow::Result<()> {
+        self.stop_broadcast(StopReason::Stopped);
+        let _guard = self.rt.enter();
+        self.generation += 1;
+        let generation = self.generation;
+
+        // Capture/encode stay paused until the first viewer arrives.
+        let control = EncoderControl::new(false);
+        let server = Arc::new(BroadcastServer::start(
+            &self.identity,
+            ServerOptions {
+                name: self.display_name.clone(),
+                max_viewers: MAX_VIEWERS,
+                bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+            },
+            {
+                let control = control.clone();
+                move || control.request_keyframe()
+            },
+        )?);
+        let port = server.local_addr()?.port();
+        let emit = self.emitter();
+
+        let viewers_task = self.rt.spawn({
+            let mut viewers = server.viewers();
+            let control = control.clone();
+            let emit = emit.clone();
+            async move {
+                loop {
+                    let n = *viewers.borrow_and_update();
+                    control.set_active(n > 0);
+                    emit(Event::ViewerCount(n));
+                    if viewers.changed().await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let encoder = EncoderPipeline::start(
+            control,
+            source.clone(),
+            preset,
+            {
+                let server = server.clone();
+                move |frame| server.publish(frame)
+            },
+            move |end| emit(Event::BroadcastEnded { generation, end }),
+        );
+
+        tracing::info!(
+            source = %source.name,
+            "broadcast started; dev connect string: --connect 127.0.0.1:{port}#{}",
+            self.identity.fingerprint().to_hex()
+        );
+        self.broadcast = Some(Broadcast {
+            generation,
+            port,
+            source_name: source.name,
+            encoder,
+            server,
+            viewers_task,
+        });
+        Ok(())
+    }
+
+    pub fn stop_broadcast(&mut self, reason: StopReason) {
+        let Some(b) = self.broadcast.take() else {
+            return;
+        };
+        // Joins the encoder thread, which also releases its handle on the server.
+        drop(b.encoder);
+        b.viewers_task.abort();
+        let server = b.server;
+        self.rt.spawn(async move { server.stop(reason).await });
+        tracing::info!(?reason, "broadcast stopped");
+    }
+
+    /// Starts watching `target`, replacing any current session: there is never more than one.
+    pub fn watch(&mut self, target: PeerTarget) -> SessionId {
+        self.stop_watching();
+        let _guard = self.rt.enter();
+
+        // The decoder asks for keyframes through the session, which is created after it.
+        let requester: Arc<OnceLock<Box<dyn Fn() + Send + Sync>>> = Arc::new(OnceLock::new());
+        let need_keyframe: Arc<dyn Fn() + Send + Sync> = {
+            let requester = requester.clone();
+            Arc::new(move || {
+                if let Some(request) = requester.get() {
+                    request();
+                }
+            })
+        };
+        let repaint: Arc<dyn Fn() + Send + Sync> = {
+            let ctx = self.ctx.clone();
+            Arc::new(move || ctx.request_repaint())
+        };
+        let mut decoder = DecoderPipeline::start(self.video.clone(), repaint, need_keyframe);
+        let decoder_stats = decoder.stats.clone();
+
+        let emit = self.emitter();
+        tracing::info!(peer = %target.name, fingerprint = %target.fingerprint, addrs = ?target.addrs, "watching");
+        let session = self.client.watch(
+            target.addrs,
+            target.fingerprint,
+            self.display_name.clone(),
+            move |frame| decoder.push(frame),
+            move |id, event| emit(Event::Session(id, event)),
+        );
+        let _ = requester.set(Box::new(session.keyframe_requester()));
+        let id = session.id();
+        self.watching = Some(Watching {
+            _session: session,
+            decoder_stats,
+        });
+        id
+    }
+
+    pub fn stop_watching(&mut self) {
+        if self.watching.take().is_some() {
+            tracing::info!("stopped watching");
+        }
+        self.video.take();
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        self.watching = None;
+        if let Some(b) = self.broadcast.take() {
+            drop(b.encoder);
+            b.viewers_task.abort();
+            self.rt.block_on(b.server.stop(StopReason::Stopped));
+        }
+        self.rt.block_on(self.client.close());
+    }
+}

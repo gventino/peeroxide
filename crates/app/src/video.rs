@@ -16,10 +16,6 @@ impl VideoView {
         self.texture = None;
     }
 
-    pub fn has_frame(&self) -> bool {
-        self.texture.is_some()
-    }
-
     pub fn ui(&mut self, ui: &mut egui::Ui, slot: &VideoSlot, overlay: &str) {
         if let Some(frame) = slot.take() {
             let image = ColorImage::from_rgba_premultiplied(

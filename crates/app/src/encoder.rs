@@ -7,17 +7,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use p2pss_capture::{CaptureOptions, CaptureStream, CloseReason, Next, Source};
 use p2pss_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
+use p2pss_net::VideoFrame;
 
 use crate::stats::Meter;
-
-#[derive(Clone, Debug)]
-pub struct EncodedPacket {
-    pub seq: u64,
-    pub keyframe: bool,
-    /// Wall-clock capture time; only comparable across processes on the same machine.
-    pub capture_time_us: u64,
-    pub data: Vec<u8>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EncoderEnd {
@@ -75,7 +67,7 @@ impl EncoderPipeline {
         control: Arc<EncoderControl>,
         source: Source,
         preset: Preset,
-        on_packet: impl FnMut(EncodedPacket) + Send + 'static,
+        on_packet: impl FnMut(VideoFrame) + Send + 'static,
         on_end: impl FnOnce(EncoderEnd) + Send + 'static,
     ) -> Self {
         let stats = Arc::new(Mutex::new(EncoderStats::default()));
@@ -119,7 +111,7 @@ fn run(
     control: &EncoderControl,
     source: &Source,
     preset: &Preset,
-    mut on_packet: impl FnMut(EncodedPacket),
+    mut on_packet: impl FnMut(VideoFrame),
     stats: &Mutex<EncoderStats>,
 ) -> EncoderEnd {
     // Paced from when a frame is taken (not when encoding ends) so encode time doesn't accumulate
@@ -221,11 +213,11 @@ fn run(
             .meter
             .record(encoded.data.len(), started.elapsed());
 
-        on_packet(EncodedPacket {
+        on_packet(VideoFrame {
             seq,
             keyframe: encoded.keyframe,
             capture_time_us: wall_clock_us(captured_at),
-            data: encoded.data,
+            data: encoded.data.into(),
         });
         seq += 1;
     }
