@@ -34,6 +34,15 @@ pub enum ViewerInput {
 }
 
 impl ViewerState {
+    pub fn peer(&self) -> Option<&PeerRef> {
+        match self {
+            Self::Idle => None,
+            Self::Connecting { peer }
+            | Self::Streaming { peer, .. }
+            | Self::Disconnected { peer, .. } => Some(peer),
+        }
+    }
+
     /// Whether a session should exist for this state (enforces one session at a time).
     pub fn wants_session(&self) -> bool {
         matches!(self, Self::Connecting { .. } | Self::Streaming { .. })

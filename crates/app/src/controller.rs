@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use eframe::egui;
 use p2pss_capture::Source;
 use p2pss_codec::Preset;
+use p2pss_discovery::{Discovery, Peer};
 use p2pss_net::{
     BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
     StopReason, ViewerClient,
@@ -27,6 +28,7 @@ pub enum Event {
         end: EncoderEnd,
     },
     Session(SessionId, SessionEvent),
+    Peers(Vec<Peer>),
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +36,16 @@ pub struct PeerTarget {
     pub fingerprint: Fingerprint,
     pub name: String,
     pub addrs: Vec<SocketAddr>,
+}
+
+impl PeerTarget {
+    pub fn from_peer(peer: &Peer) -> Option<Self> {
+        Some(Self {
+            fingerprint: Fingerprint::from_hex(&peer.fingerprint)?,
+            name: peer.name.clone(),
+            addrs: peer.addrs.clone(),
+        })
+    }
 }
 
 pub struct Broadcast {
@@ -61,6 +73,8 @@ pub struct Controller {
     pub video: Arc<VideoSlot>,
     pub broadcast: Option<Broadcast>,
     pub watching: Option<Watching>,
+    discovery: Option<Discovery>,
+    pub discovery_error: Option<String>,
     generation: u64,
 }
 
@@ -80,7 +94,7 @@ impl Controller {
             ViewerClient::new()?
         };
         let (events_tx, events) = channel();
-        Ok(Self {
+        let mut ctrl = Self {
             rt,
             identity,
             display_name,
@@ -91,8 +105,27 @@ impl Controller {
             video: Arc::new(VideoSlot::default()),
             broadcast: None,
             watching: None,
+            discovery: None,
+            discovery_error: None,
             generation: 0,
-        })
+        };
+        ctrl.start_discovery();
+        Ok(ctrl)
+    }
+
+    fn start_discovery(&mut self) {
+        let emit = self.emitter();
+        let started = Discovery::new(&self.identity.fingerprint().to_hex()).and_then(|d| {
+            d.browse(move |peers| emit(Event::Peers(peers)))?;
+            Ok(d)
+        });
+        match started {
+            Ok(d) => self.discovery = Some(d),
+            Err(e) => {
+                tracing::warn!("discovery unavailable: {e}");
+                self.discovery_error = Some(format!("Discovery unavailable: {e}"));
+            }
+        }
     }
 
     pub fn fingerprint(&self) -> Fingerprint {
@@ -167,6 +200,11 @@ impl Controller {
             "broadcast started; dev connect string: --connect 127.0.0.1:{port}#{}",
             self.identity.fingerprint().to_hex()
         );
+        if let Some(d) = &mut self.discovery
+            && let Err(e) = d.announce(&self.display_name, port)
+        {
+            tracing::warn!("could not announce on mDNS: {e}");
+        }
         self.broadcast = Some(Broadcast {
             generation,
             port,
@@ -182,6 +220,9 @@ impl Controller {
         let Some(b) = self.broadcast.take() else {
             return;
         };
+        if let Some(d) = &mut self.discovery {
+            d.withdraw();
+        }
         // Joins the encoder thread, which also releases its handle on the server.
         drop(b.encoder);
         b.viewers_task.abort();

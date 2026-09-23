@@ -14,6 +14,7 @@ eframe = "0.36.2"
 gethostname = "1.1.0"
 p2pss-capture = { version = "0.1.0", path = "../capture" }
 p2pss-codec = { version = "0.1.0", path = "../codec" }
+p2pss-discovery = { version = "0.1.0", path = "../discovery" }
 p2pss-net = { version = "0.1.0", path = "../net" }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 tracing = "0.1.44"

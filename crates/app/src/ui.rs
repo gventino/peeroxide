@@ -4,6 +4,7 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, RichText};
 use p2pss_capture::{Source, SourceKind, list_sources};
 use p2pss_codec::Preset;
+use p2pss_discovery::Peer;
 use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
@@ -23,10 +24,12 @@ pub struct App {
     broadcast_note: Option<String>,
     viewer: ViewerState,
     session: Option<SessionId>,
+    peers: Vec<Peer>,
     connect_input: String,
     watch_note: Option<String>,
     video: VideoView,
     autostart: bool,
+    autowatch: Option<String>,
 }
 
 impl App {
@@ -45,10 +48,12 @@ impl App {
             broadcast_note: None,
             viewer: ViewerState::Idle,
             session: None,
+            peers: Vec::new(),
             connect_input: String::new(),
             watch_note: None,
             video: VideoView::default(),
             autostart: false,
+            autowatch: args.watch.as_ref().map(|w| w.to_lowercase()),
         };
         app.refresh_sources();
         if let Some(query) = &args.broadcast {
@@ -119,6 +124,19 @@ impl App {
         while let Ok(event) = self.ctrl.events.try_recv() {
             match event {
                 Event::ViewerCount(n) => self.viewer_count = n,
+                Event::Peers(peers) => {
+                    self.peers = peers;
+                    let wanted = self.autowatch.as_deref().and_then(|q| {
+                        self.peers
+                            .iter()
+                            .find(|p| p.name.to_lowercase().contains(q))
+                            .and_then(PeerTarget::from_peer)
+                    });
+                    if let Some(target) = wanted {
+                        self.autowatch = None;
+                        self.watch(target);
+                    }
+                }
                 Event::BroadcastEnded { generation, end } => {
                     let current = self.ctrl.broadcast.as_ref().map(|b| b.generation);
                     if current != Some(generation) || end == EncoderEnd::Stopped {
@@ -249,23 +267,63 @@ impl App {
         }
     }
 
+    fn peer_list_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Broadcasting on this network").strong());
+        if self.peers.is_empty() {
+            let text = self
+                .ctrl
+                .discovery_error
+                .as_deref()
+                .unwrap_or("No one is broadcasting yet");
+            ui.weak(text);
+            return;
+        }
+        let watched = self.viewer.peer().map(|p| p.fingerprint.to_hex());
+        let mut picked = None;
+        egui::ScrollArea::vertical()
+            .max_height(240.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for peer in &self.peers {
+                    let short = Fingerprint::from_hex(&peer.fingerprint)
+                        .map(|f| f.short())
+                        .unwrap_or_default();
+                    let same_name = self.peers.iter().filter(|p| p.name == peer.name).count() > 1;
+                    let selected = watched.as_deref() == Some(peer.fingerprint.as_str());
+                    ui.horizontal(|ui| {
+                        let addrs: Vec<String> =
+                            peer.addrs.iter().map(ToString::to_string).collect();
+                        let row = ui
+                            .selectable_label(selected, format!("🖵 {}", truncate(&peer.name, 24)))
+                            .on_hover_text(format!(
+                                "ID {short}\nFingerprint {}\n{}",
+                                peer.fingerprint,
+                                addrs.join("\n")
+                            ));
+                        ui.weak(&short);
+                        if same_name {
+                            ui.colored_label(ui.visuals().warn_fg_color, "⚠")
+                                .on_hover_text(
+                                    "Another broadcaster uses the same name. Check the ID with the \
+                                 person you expect before trusting what you see.",
+                                );
+                        }
+                        if row.clicked() && !selected {
+                            picked = PeerTarget::from_peer(peer);
+                        }
+                    });
+                }
+            });
+        if let Some(target) = picked {
+            self.watch(target);
+        }
+    }
+
     fn watch_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Watch");
         ui.add_space(4.0);
-        ui.label("Connect to (IP:PORT#FINGERPRINT)");
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut self.connect_input)
-                .desired_width(ui.available_width())
-                .hint_text("192.168.0.10:50123#3f9a…"),
-        );
-        let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.button("Watch").clicked() || submitted {
-            match parse_connect(&self.connect_input) {
-                Ok(target) => self.watch(target),
-                Err(e) => self.watch_note = Some(e),
-            }
-        }
-        ui.add_space(6.0);
+        self.peer_list_ui(ui);
+        ui.add_space(8.0);
 
         match self.viewer.clone() {
             ViewerState::Idle => {
@@ -298,6 +356,23 @@ impl App {
         if let Some(note) = &self.watch_note {
             ui.colored_label(ui.visuals().warn_fg_color, note);
         }
+
+        ui.add_space(8.0);
+        egui::CollapsingHeader::new("Connect manually").show(ui, |ui| {
+            ui.weak("IP:PORT#FINGERPRINT, for networks where discovery is blocked");
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.connect_input)
+                    .desired_width(ui.available_width())
+                    .hint_text("192.168.0.10:50123#3f9a…"),
+            );
+            let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.button("Watch").clicked() || submitted {
+                match parse_connect(&self.connect_input) {
+                    Ok(target) => self.watch(target),
+                    Err(e) => self.watch_note = Some(e),
+                }
+            }
+        });
     }
 
     fn watch_overlay(&self) -> String {

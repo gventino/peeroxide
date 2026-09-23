@@ -19,6 +19,10 @@ pub struct Args {
     #[arg(long, value_name = "SOURCE")]
     pub broadcast: Option<String>,
 
+    /// Watch the first discovered broadcaster whose name contains this text.
+    #[arg(long, value_name = "NAME")]
+    pub watch: Option<String>,
+
     /// Watch a broadcaster directly, bypassing discovery: "IP:PORT#FINGERPRINT".
     #[arg(long, value_name = "ADDR#FINGERPRINT")]
     pub connect: Option<String>,
