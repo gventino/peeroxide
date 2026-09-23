@@ -44,7 +44,21 @@ impl EncoderControl {
         self.keyframe.store(true, Ordering::Relaxed);
     }
 
-    fn sleep(&self, d: Duration) {
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Asks the pipeline thread to end and wakes it.
+    pub(crate) fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.wake.1.notify_all();
+    }
+
+    pub(crate) fn sleep(&self, d: Duration) {
         let guard = self.wake.0.lock().unwrap();
         let _ = self.wake.1.wait_timeout(guard, d).unwrap();
     }

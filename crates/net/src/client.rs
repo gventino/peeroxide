@@ -314,11 +314,17 @@ async fn route_streams(
             }
             Ok(Ok(Some(stream_kind::AUDIO))) if on_audio.is_some() => {
                 if let Some(mut on_audio) = on_audio.take() {
+                    let conn = conn.clone();
                     _audio = Some(AbortOnDrop(tokio::spawn(async move {
                         loop {
                             match read_audio(&mut stream).await {
                                 Ok(Some(packet)) => on_audio(packet),
                                 Ok(None) => break,
+                                // Ending the session also ends this stream; that's no failure.
+                                Err(e) if conn.close_reason().is_some() => {
+                                    tracing::debug!("audio stream closed: {e}");
+                                    break;
+                                }
                                 Err(e) => {
                                     tracing::warn!("audio stream failed: {e}");
                                     break;

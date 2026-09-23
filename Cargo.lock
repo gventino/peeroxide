@@ -3288,6 +3288,7 @@ dependencies = [
  "eframe",
  "gethostname",
  "if-addrs",
+ "peeroxide-audio",
  "peeroxide-capture",
  "peeroxide-codec",
  "peeroxide-discovery",

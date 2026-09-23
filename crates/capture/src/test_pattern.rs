@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::Frame;
 use crate::slot::FrameSlot;
@@ -9,6 +9,10 @@ use crate::slot::FrameSlot;
 pub(crate) const WIDTH: u32 = 1280;
 pub(crate) const HEIGHT: u32 = 720;
 const BOX: u32 = 120;
+/// Square that turns white during the first 100 ms of every wall-clock second, when the test
+/// tone beeps: audio/video sync can be checked by eye and ear.
+const FLASH: u32 = 100;
+const FLASH_MS: u128 = 100;
 const BARS: [[u8; 4]; 8] = [
     [255, 255, 255, 255],
     [0, 255, 255, 255],
@@ -82,7 +86,8 @@ fn background() -> Vec<u8> {
     data
 }
 
-/// Renders frame `n`: static bars plus a bouncing box and a 32-bit frame counter strip.
+/// Renders frame `n`: static bars plus a bouncing box, a flash square in step with the test tone,
+/// and a 32-bit frame counter strip.
 pub(crate) fn render(background: &[u8], n: u64) -> Frame {
     let mut data = background.to_vec();
     let span_x = u64::from(WIDTH - BOX);
@@ -90,6 +95,18 @@ pub(crate) fn render(background: &[u8], n: u64) -> Frame {
     let bx = bounce(n * 7, span_x) as u32;
     let by = bounce(n * 5, span_y) as u32;
     fill(&mut data, bx, by, BOX, BOX, [40, 40, 40, 255]);
+
+    let into_second = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        % 1000;
+    let flash = if into_second < FLASH_MS {
+        [255, 255, 255, 255]
+    } else {
+        [20, 20, 20, 255]
+    };
+    fill(&mut data, WIDTH - FLASH - 20, 20, FLASH, FLASH, flash);
 
     let cell = WIDTH / 32;
     for bit in 0..32 {
