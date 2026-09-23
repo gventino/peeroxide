@@ -5,6 +5,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use eframe::egui;
+use peeroxide_audio::{AudioSource, OutputControl};
 use peeroxide_capture::Source;
 use peeroxide_codec::Preset;
 use peeroxide_discovery::{Discovery, Peer};
@@ -15,6 +16,8 @@ use peeroxide_net::{
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
+use crate::audio_decoder::{AudioReceiver, AudioReceiverStats};
+use crate::audio_encoder::{AudioPipeline, audio_source};
 use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
 use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
 
@@ -26,12 +29,14 @@ fn start_server(
     identity: &Identity,
     name: &str,
     preferred_port: Option<u16>,
+    audio: bool,
     on_keyframe_request: impl Fn() + Send + Sync + Clone + 'static,
 ) -> Result<BroadcastServer, NetError> {
     let options = |port| ServerOptions {
         name: name.to_owned(),
         max_viewers: MAX_VIEWERS,
         bind: SocketAddr::from(([0, 0, 0, 0], port)),
+        audio,
     };
     if let Some(port) = preferred_port.filter(|p| *p != 0) {
         match BroadcastServer::start(identity, options(port), on_keyframe_request.clone()) {
@@ -40,6 +45,13 @@ fn start_server(
         }
     }
     BroadcastServer::start(identity, options(0), on_keyframe_request)
+}
+
+/// The audio to capture for `source`, if this machine can capture it.
+fn checked_audio_source(source: &Source) -> Result<AudioSource, String> {
+    let audio = audio_source(source).ok_or("could not tell which app owns this window")?;
+    peeroxide_audio::check(&audio).map_err(|e| e.to_string())?;
+    Ok(audio)
 }
 
 /// Usable IPv4 addresses per network adapter (LAN, and virtual LANs such as Hamachi or Radmin).
@@ -64,6 +76,11 @@ pub enum Event {
     BroadcastEnded {
         generation: u64,
         end: EncoderEnd,
+    },
+    /// Audio capture failed during broadcast `generation`; video goes on.
+    AudioEnded {
+        generation: u64,
+        error: String,
     },
     Session(SessionId, SessionEvent),
     Peers(Vec<Peer>),
@@ -91,6 +108,10 @@ pub struct Broadcast {
     pub port: u16,
     pub source_name: String,
     pub encoder: EncoderPipeline,
+    /// Present while the broadcast shares audio.
+    pub audio: Option<AudioPipeline>,
+    /// Why audio was asked for but isn't shared.
+    pub audio_note: Option<String>,
     server: Arc<BroadcastServer>,
     viewers_task: JoinHandle<()>,
 }
@@ -98,6 +119,7 @@ pub struct Broadcast {
 pub struct Watching {
     _session: SessionHandle,
     pub decoder_stats: Arc<Mutex<DecoderStats>>,
+    pub audio_stats: Arc<Mutex<AudioReceiverStats>>,
 }
 
 pub struct Controller {
@@ -109,6 +131,8 @@ pub struct Controller {
     events_tx: Sender<Event>,
     pub events: Receiver<Event>,
     pub video: Arc<VideoSlot>,
+    /// Volume and mute of what we watch; kept across sessions and broadcasters.
+    pub output: Arc<OutputControl>,
     pub broadcast: Option<Broadcast>,
     pub watching: Option<Watching>,
     discovery: Option<Discovery>,
@@ -141,6 +165,7 @@ impl Controller {
             events_tx,
             events,
             video: Arc::new(VideoSlot::default()),
+            output: OutputControl::new(1.0, false),
             broadcast: None,
             watching: None,
             discovery: None,
@@ -190,24 +215,40 @@ impl Controller {
     }
 
     /// Starts broadcasting on `preferred_port` when it is free (a random port otherwise) and
-    /// returns the port actually used.
+    /// returns the port actually used. With `share_audio`, the source's audio is shared too if
+    /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why.
     pub fn start_broadcast(
         &mut self,
         source: Source,
         preset: Preset,
         preferred_port: Option<u16>,
+        share_audio: bool,
     ) -> anyhow::Result<u16> {
         self.stop_broadcast(StopReason::Stopped);
         let _guard = self.rt.enter();
         self.generation += 1;
         let generation = self.generation;
 
+        let (audio_source, audio_note) = if share_audio {
+            match checked_audio_source(&source) {
+                Ok(a) => (Some(a), None),
+                Err(e) => {
+                    tracing::warn!("audio unavailable: {e}");
+                    (None, Some(format!("Sharing video only: {e}")))
+                }
+            }
+        } else {
+            (None, None)
+        };
+
         // Capture/encode stay paused until the first viewer arrives.
         let control = EncoderControl::new(false);
+        let audio_control = EncoderControl::new(false);
         let server = Arc::new(start_server(
             &self.identity,
             &self.display_name,
             preferred_port,
+            audio_source.is_some(),
             {
                 let control = control.clone();
                 move || control.request_keyframe()
@@ -219,11 +260,13 @@ impl Controller {
         let viewers_task = self.rt.spawn({
             let mut viewers = server.viewers();
             let control = control.clone();
+            let audio_control = audio_control.clone();
             let emit = emit.clone();
             async move {
                 loop {
                     let n = *viewers.borrow_and_update();
                     control.set_active(n > 0);
+                    audio_control.set_active(n > 0);
                     emit(Event::ViewerCount(n));
                     if viewers.changed().await.is_err() {
                         break;
@@ -232,6 +275,19 @@ impl Controller {
             }
         });
 
+        let audio = audio_source.map(|audio_source| {
+            let emit = emit.clone();
+            AudioPipeline::start(
+                audio_control,
+                audio_source,
+                preset.audio_bitrate_bps,
+                {
+                    let server = server.clone();
+                    move |packet| server.publish_audio(packet)
+                },
+                move |error| emit(Event::AudioEnded { generation, error }),
+            )
+        });
         let encoder = EncoderPipeline::start(
             control,
             source.clone(),
@@ -245,6 +301,7 @@ impl Controller {
 
         tracing::info!(
             source = %source.name,
+            audio = ?audio_source,
             "broadcast started; dev connect string: --connect 127.0.0.1:{port}#{}",
             self.identity.fingerprint().to_hex()
         );
@@ -263,6 +320,8 @@ impl Controller {
             port,
             source_name: source.name,
             encoder,
+            audio,
+            audio_note,
             server,
             viewers_task,
         });
@@ -276,8 +335,9 @@ impl Controller {
         if let Some(d) = &mut self.discovery {
             d.withdraw();
         }
-        // Joins the encoder thread, which also releases its handle on the server.
+        // Joins the encoder threads, which also releases their handles on the server.
         drop(b.encoder);
+        drop(b.audio);
         b.viewers_task.abort();
         let server = b.server;
         self.rt.spawn(async move { server.stop(reason).await });
@@ -305,6 +365,9 @@ impl Controller {
         };
         let mut decoder = DecoderPipeline::start(self.video.clone(), repaint, need_keyframe);
         let decoder_stats = decoder.stats.clone();
+        // Both pipelines live inside the session's callbacks and end with it.
+        let audio = AudioReceiver::start(self.output.clone(), decoder.video_offset.clone());
+        let audio_stats = audio.stats.clone();
 
         let emit = self.emitter();
         tracing::info!(peer = %target.name, fingerprint = %target.fingerprint, addrs = ?target.addrs, "watching");
@@ -313,6 +376,7 @@ impl Controller {
             target.fingerprint,
             self.display_name.clone(),
             move |frame| decoder.push(frame),
+            move |packet| audio.push(packet),
             move |id, event| emit(Event::Session(id, event)),
         );
         let _ = requester.set(Box::new(session.keyframe_requester()));
@@ -320,6 +384,7 @@ impl Controller {
         self.watching = Some(Watching {
             _session: session,
             decoder_stats,
+            audio_stats,
         });
         id
     }
@@ -337,6 +402,7 @@ impl Drop for Controller {
         self.watching = None;
         if let Some(b) = self.broadcast.take() {
             drop(b.encoder);
+            drop(b.audio);
             b.viewers_task.abort();
             self.rt.block_on(b.server.stop(StopReason::Stopped));
         }
@@ -359,13 +425,13 @@ mod tests {
             .unwrap()
             .port();
 
-        let first = start_server(&id, "t", Some(free), || {}).unwrap();
+        let first = start_server(&id, "t", Some(free), false, || {}).unwrap();
         assert_eq!(first.local_addr().unwrap().port(), free);
 
-        let taken = start_server(&id, "t", Some(free), || {}).unwrap();
+        let taken = start_server(&id, "t", Some(free), false, || {}).unwrap();
         assert_ne!(taken.local_addr().unwrap().port(), free);
 
-        let random = start_server(&id, "t", None, || {}).unwrap();
+        let random = start_server(&id, "t", None, false, || {}).unwrap();
         assert_ne!(random.local_addr().unwrap().port(), 0);
     }
 }

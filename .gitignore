@@ -22,3 +22,6 @@ target
 
 # Packaged releases
 /dist
+
+# Written by `just probe-audio` (the audio probe example)
+/audio-probe.wav

@@ -2,7 +2,7 @@
 
 This document lists the functional requirements (FR) for Peeroxide: a cross-platform (Windows/macOS/Linux) Rust application that lets multiple peers on the same local network broadcast their screen simultaneously, while each viewer watches only one broadcaster's stream at a time. No central server is involved; peers discover and connect to each other directly.
 
-Audio sharing is a planned but deferred feature and is explicitly out of scope for the current MVP (see FR-14).
+Audio is optional: a broadcaster may share the audio of the captured source alongside the video (FR-14 to FR-16).
 
 ## System Context
 
@@ -50,10 +50,13 @@ Each broadcaster streams independently to whichever viewers are currently connec
 | FR-11 | Connection Status Feedback | The application shall display the current connection state for each stream (e.g., Connecting, Streaming, Disconnected, Error). | Medium |
 | FR-12 | Broadcaster Disconnect Handling | If a broadcaster stops sharing or becomes unreachable, all of its viewers shall be notified and returned to the broadcaster list. | High |
 | FR-13 | Cross-Platform Interoperability | A broadcaster running on one supported OS shall be viewable by a viewer running on any other supported OS (Windows, macOS, Linux). | High |
-| FR-14 | Audio Sharing (Deferred) | The system shall eventually support streaming desktop or window audio alongside video. Deferred to a later release; out of scope for the current MVP. | Deferred |
+| FR-14 | Audio Sharing | A broadcaster shall be able to share the audio of the captured source alongside the video: only the shared application's sound for a window, or the computer's sound output (excluding Peeroxide's own playback) for a full desktop. The microphone is never captured. Viewers hear the audio in sync with the video. | Medium |
+| FR-15 | Broadcast Without Audio | Sharing audio shall be optional and off by default. The broadcaster chooses before starting a broadcast, the choice is remembered, and viewers are told when a broadcast has no audio. | Medium |
+| FR-16 | Viewer Volume Control | A viewer shall be able to change the playback volume of the stream (0–100%) and mute it. The setting only affects that viewer and is remembered across sessions. | Medium |
 
 ## Traceability Notes
 
 - FR-06 and FR-07 are the core simplification constraint of this app: the UI and network layer never need to composite or decode more than one incoming stream at a time on the viewer side.
 - FR-08 and FR-09 mean the architecture must treat "broadcaster" and "viewer" as roles a peer can hold independently and simultaneously (a peer could, in principle, broadcast and view at the same time).
-- FR-14 is tracked here so it is not forgotten, but no design decisions in the current MVP should assume audio is present.
+- FR-14 to FR-16: audio is an optional companion to the video, never a dependency. A broadcast or a viewing session must keep working video-only when audio is off, unsupported, or failing (see NFR-05).
+- Current status of FR-14: audio capture exists for Windows (10 2004+ and 11) only. macOS and Linux broadcasters can't share audio yet (planned for 0.7, see the roadmap), but viewers on any platform can play audio from a Windows broadcaster, which keeps FR-13 intact.

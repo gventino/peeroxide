@@ -1,6 +1,8 @@
 // Release builds are GUI apps on Windows (no console window); logs still go to the log file.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio_decoder;
+mod audio_encoder;
 mod contacts;
 mod controller;
 mod decoder;
@@ -23,6 +25,10 @@ pub struct Args {
     /// or part of a window title.
     #[arg(long, value_name = "SOURCE")]
     pub broadcast: Option<String>,
+
+    /// With --broadcast: turn on "Share audio" (remembered, like ticking the checkbox).
+    #[arg(long, requires = "broadcast")]
+    pub share_audio: bool,
 
     /// Watch the first discovered broadcaster whose name contains this text.
     #[arg(long, value_name = "NAME")]

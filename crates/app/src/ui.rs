@@ -9,6 +9,7 @@ use peeroxide_discovery::Peer;
 use peeroxide_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
+use crate::audio_encoder::{audio_source, describe as describe_audio};
 use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
@@ -36,6 +37,8 @@ pub struct App {
     watch_target: Option<PeerTarget>,
     connect_input: String,
     watch_note: Option<String>,
+    /// Whether the broadcaster we're watching shares audio.
+    stream_audio: bool,
     video: VideoView,
     autostart: bool,
     autowatch: Option<String>,
@@ -67,11 +70,17 @@ impl App {
             peers: Vec::new(),
             connect_input: String::new(),
             watch_note: None,
+            stream_audio: false,
             video: VideoView::default(),
             autostart: false,
             autowatch: args.watch.as_ref().map(|w| w.to_lowercase()),
         };
+        app.ctrl.output.set_volume(app.settings.volume());
+        app.ctrl.output.set_muted(app.settings.muted);
         app.refresh_sources();
+        if args.share_audio {
+            app.settings.share_audio = true;
+        }
         if let Some(query) = &args.broadcast {
             match find_source(&app.sources, query) {
                 Some(i) => {
@@ -158,10 +167,12 @@ impl App {
         };
         self.broadcast_note = None;
         self.viewer_count = 0;
-        match self
-            .ctrl
-            .start_broadcast(source, self.preset, self.settings.broadcast_port)
-        {
+        match self.ctrl.start_broadcast(
+            source,
+            self.preset,
+            self.settings.broadcast_port,
+            self.settings.share_audio,
+        ) {
             Ok(port) if self.settings.broadcast_port != Some(port) => {
                 self.settings.broadcast_port = Some(port);
                 self.save_settings();
@@ -174,6 +185,7 @@ impl App {
     fn watch(&mut self, target: PeerTarget) {
         self.watch_note = None;
         self.video.clear();
+        self.stream_audio = false;
         self.viewer = self.viewer.transition(ViewerInput::Select(PeerRef {
             fingerprint: target.fingerprint,
             name: target.name.clone(),
@@ -250,6 +262,15 @@ impl App {
                     self.viewer_count = 0;
                     self.broadcast_note = Some(note);
                 }
+                Event::AudioEnded { generation, error } => {
+                    if let Some(b) = &mut self.ctrl.broadcast
+                        && b.generation == generation
+                    {
+                        b.audio = None;
+                        b.audio_note =
+                            Some(format!("Audio stopped ({error}); still sharing video"));
+                    }
+                }
                 Event::Session(id, event) => {
                     if self.session != Some(id) {
                         continue;
@@ -258,7 +279,10 @@ impl App {
                         SessionEvent::Connected {
                             broadcaster_name,
                             remote,
+                            audio,
                         } => {
+                            tracing::info!(broadcaster = %broadcaster_name, audio, "watching");
+                            self.stream_audio = audio;
                             self.remember_contact(&broadcaster_name, remote);
                             ViewerInput::Connected { broadcaster_name }
                         }
@@ -334,6 +358,9 @@ impl App {
                 self.settings.preset = Some(self.preset.name.into());
                 self.save_settings();
             }
+            if !live {
+                self.share_audio_ui(ui);
+            }
         });
         ui.add_space(6.0);
 
@@ -344,6 +371,10 @@ impl App {
                 ui.label(format!("{n} viewer{}", if n == 1 { "" } else { "s" }));
             });
             ui.label(format!("Sharing {}", truncate(&b.source_name, 40)));
+            match &b.audio {
+                Some(a) => ui.label(format!("🔊 With audio: {}", describe_audio(&a.source))),
+                None => ui.weak("🔇 No audio"),
+            };
             if self.viewer_count == 0 {
                 ui.weak("Capture paused until someone watches");
             } else {
@@ -353,10 +384,21 @@ impl App {
                     .canvas
                     .map(|(w, h)| format!("{w}x{h} · "))
                     .unwrap_or_default();
+                let audio = b
+                    .audio
+                    .as_ref()
+                    .map(|a| {
+                        let kbps = a.stats.lock().unwrap().meter.rates().kbps;
+                        format!(" · audio {kbps:.0} kbps")
+                    })
+                    .unwrap_or_default();
                 ui.weak(format!(
-                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms",
+                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{audio}",
                     r.fps, r.kbps, r.avg_ms
                 ));
+            }
+            if let Some(note) = &b.audio_note {
+                ui.colored_label(ui.visuals().warn_fg_color, note);
             }
             let (port, fingerprint) = (b.port, self.ctrl.fingerprint().to_hex());
             ui.horizontal(|ui| {
@@ -390,6 +432,35 @@ impl App {
         }
         if let Some(note) = &self.broadcast_note {
             ui.colored_label(ui.visuals().warn_fg_color, note);
+        }
+    }
+
+    /// "Share audio" checkbox, with exactly what it would capture for the selected source.
+    fn share_audio_ui(&mut self, ui: &mut egui::Ui) {
+        let audio = self.sources.get(self.selected).and_then(audio_source);
+        let supported = audio.as_ref().is_some_and(peeroxide_audio::is_supported);
+        ui.add_space(2.0);
+        let checkbox = ui
+            .add_enabled(
+                supported,
+                egui::Checkbox::new(&mut self.settings.share_audio, "Share audio"),
+            )
+            .on_disabled_hover_text(if audio.is_none() {
+                "Can't tell which app plays this window's sound"
+            } else {
+                "Audio sharing isn't available on this system yet"
+            });
+        if checkbox.changed() {
+            self.save_settings();
+        }
+        if let Some(audio) = audio.filter(|_| supported && self.settings.share_audio) {
+            let scope = describe_audio(&audio);
+            let mut chars = scope.chars();
+            let scope: String = chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default();
+            ui.weak(format!("{scope}. Your microphone is never shared."));
         }
     }
 
@@ -552,6 +623,7 @@ impl App {
                 broadcaster_name, ..
             } => {
                 ui.label(format!("Watching {broadcaster_name}"));
+                self.volume_ui(ui);
                 if ui.button("■ Stop watching").clicked() {
                     self.apply(ViewerInput::StopWatching);
                 }
@@ -585,6 +657,55 @@ impl App {
         });
     }
 
+    /// Mute button and volume slider, or why there is nothing to hear.
+    fn volume_ui(&mut self, ui: &mut egui::Ui) {
+        if !self.stream_audio {
+            ui.weak("🔇 The broadcaster isn't sharing audio");
+            return;
+        }
+        ui.horizontal(|ui| {
+            let muted = self.settings.muted;
+            let mut percent = self.settings.volume.unwrap_or(100).min(100);
+            let icon = if muted || percent == 0 {
+                "🔇"
+            } else {
+                "🔊"
+            };
+            if ui
+                .button(icon)
+                .on_hover_text(if muted { "Unmute" } else { "Mute" })
+                .clicked()
+            {
+                self.settings.muted = !muted;
+                self.ctrl.output.set_muted(!muted);
+                self.save_settings();
+            }
+            let slider = ui
+                .add(egui::Slider::new(&mut percent, 0..=100).suffix("%"))
+                .on_hover_text("Volume of this stream, on this computer only");
+            if slider.changed() {
+                self.settings.volume = Some(percent);
+                self.ctrl.output.set_volume(f32::from(percent) / 100.0);
+                if muted && percent > 0 {
+                    self.settings.muted = false;
+                    self.ctrl.output.set_muted(false);
+                }
+            }
+            // Save once the drag ends rather than on every step of it.
+            if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                self.save_settings();
+            }
+        });
+        let error = self
+            .ctrl
+            .watching
+            .as_ref()
+            .and_then(|w| w.audio_stats.lock().unwrap().output_error.clone());
+        if let Some(e) = error {
+            ui.colored_label(ui.visuals().warn_fg_color, format!("Can't play audio: {e}"));
+        }
+    }
+
     fn watch_overlay(&self) -> String {
         let Some(w) = &self.ctrl.watching else {
             return String::new();
@@ -595,8 +716,23 @@ impl App {
             .latency_ms
             .map(|l| format!("\ncapture→decode {l:.0} ms (valid only on the same machine)"))
             .unwrap_or_default();
+        let audio = if self.stream_audio {
+            let mut a = w.audio_stats.lock().unwrap();
+            let kbps = a.meter.rates().kbps;
+            let sync = a
+                .playout
+                .av_offset_ms
+                .map(|ms| format!("  A/V {ms:+.0} ms"))
+                .unwrap_or_default();
+            format!(
+                "\naudio {kbps:.0} kbps  buffer {:.0} ms{sync}  underruns {}  bad {}",
+                a.playout.buffer_ms, a.underruns, a.bad_packets
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}",
+            "{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}{audio}",
             r.fps, r.kbps, r.avg_ms, s.dropped
         )
     }

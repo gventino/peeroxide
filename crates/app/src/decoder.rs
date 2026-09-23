@@ -1,6 +1,6 @@
 //! Viewer side: H.264 packets → RGBA frames in a [`VideoSlot`] for the GUI.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -38,12 +38,44 @@ pub struct DecoderStats {
 
 type Callback = Arc<dyn Fn() + Send + Sync>;
 
+/// `local time − capture time` of the frames being shown, smoothed, in microseconds; audio
+/// follows it to stay in sync. Includes the unknown difference between the two clocks.
+pub struct VideoOffset(AtomicI64);
+
+impl VideoOffset {
+    const NONE: i64 = i64::MIN;
+
+    pub fn get(&self) -> Option<i64> {
+        Some(self.0.load(Ordering::Relaxed)).filter(|v| *v != Self::NONE)
+    }
+
+    fn record(&self, capture_time_us: u64) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as i64;
+        let sample = now - capture_time_us as i64;
+        let smoothed = match self.get() {
+            Some(old) => old + (sample - old) / 8,
+            None => sample,
+        };
+        self.0.store(smoothed, Ordering::Relaxed);
+    }
+}
+
+impl Default for VideoOffset {
+    fn default() -> Self {
+        Self(AtomicI64::new(Self::NONE))
+    }
+}
+
 pub struct DecoderPipeline {
     tx: Option<SyncSender<VideoFrame>>,
     waiting_for_keyframe: bool,
     resync: Arc<AtomicBool>,
     need_keyframe: Callback,
     pub stats: Arc<Mutex<DecoderStats>>,
+    pub video_offset: Arc<VideoOffset>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -52,11 +84,13 @@ impl DecoderPipeline {
         let (tx, rx) = mpsc::sync_channel::<VideoFrame>(QUEUE);
         let stats = Arc::new(Mutex::new(DecoderStats::default()));
         let resync = Arc::new(AtomicBool::new(false));
+        let video_offset = Arc::new(VideoOffset::default());
         let thread = std::thread::Builder::new()
             .name("decoder".into())
             .spawn({
                 let stats = stats.clone();
                 let resync = resync.clone();
+                let video_offset = video_offset.clone();
                 let need_keyframe = need_keyframe.clone();
                 move || {
                     let mut decoder = match H264Decoder::new() {
@@ -74,6 +108,7 @@ impl DecoderPipeline {
                                 s.meter.record(packet.data.len(), started.elapsed());
                                 s.latency_ms = latency_ms(packet.capture_time_us);
                                 drop(s);
+                                video_offset.record(packet.capture_time_us);
                                 output.put(frame);
                                 on_frame();
                             }
@@ -95,6 +130,7 @@ impl DecoderPipeline {
             resync,
             need_keyframe,
             stats,
+            video_offset,
             thread: Some(thread),
         }
     }

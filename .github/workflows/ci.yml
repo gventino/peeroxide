@@ -23,7 +23,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config nasm libclang-dev libpipewire-0.3-dev libdbus-1-dev \
-            libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev
 
       - name: Install NASM (macOS)
         if: runner.os == 'macOS'

@@ -19,8 +19,11 @@ fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-fn transport() -> Arc<TransportConfig> {
+/// `uni_streams`: how many unidirectional streams the peer may open at once. Broadcasters open
+/// video and audio; viewers open none.
+fn transport(uni_streams: u32) -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
+    t.max_concurrent_uni_streams(uni_streams.into());
     t.keep_alive_interval(Some(KEEP_ALIVE));
     t.max_idle_timeout(Some(
         IdleTimeout::try_from(IDLE_TIMEOUT).expect("idle timeout in range"),
@@ -39,7 +42,7 @@ pub(crate) fn server_config(identity: &Identity) -> Result<quinn::ServerConfig, 
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let crypto = QuicServerConfig::try_from(tls).map_err(|e| NetError::Config(e.to_string()))?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-    config.transport_config(transport());
+    config.transport_config(transport(0));
     Ok(config)
 }
 
@@ -63,7 +66,7 @@ pub(crate) fn client_config(
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let crypto = QuicClientConfig::try_from(tls).map_err(|e| NetError::Config(e.to_string()))?;
     let mut config = quinn::ClientConfig::new(Arc::new(crypto));
-    config.transport_config(transport());
+    config.transport_config(transport(2));
     Ok((config, mismatch))
 }
 

@@ -13,6 +13,7 @@ directories = "6.0.0"
 eframe = "0.36.2"
 gethostname = "1.1.0"
 if-addrs = "0.15"
+peeroxide-audio = { path = "../audio" }
 peeroxide-capture = { path = "../capture" }
 peeroxide-codec = { path = "../codec" }
 peeroxide-discovery = { path = "../discovery" }

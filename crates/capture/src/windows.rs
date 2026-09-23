@@ -130,6 +130,12 @@ pub(crate) fn list_sources() -> Result<Vec<Source>, CaptureError> {
     Ok(sources)
 }
 
+pub(crate) fn process_id(handle: usize) -> Option<u32> {
+    Window::from_raw_hwnd(handle as *mut std::ffi::c_void)
+        .process_id()
+        .ok()
+}
+
 pub(crate) fn start_monitor(
     handle: usize,
     options: CaptureOptions,

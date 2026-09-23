@@ -1,0 +1,94 @@
+{title}
+{underline}
+
+Share your screen (or a single window), and optionally its sound, with
+friends on the same network, including virtual LANs such as Radmin VPN or
+Hamachi.
+
+Requirements: Windows 10 version 2004 or newer, or Windows 11. No installation.
+Build: {commit}
+
+
+NEW: SOUND
+----------
+- You can now share the sound of what you broadcast (see SHARING YOUR
+  SCREEN). Viewers get a volume slider and a mute button.
+- This version can't see or connect to 0.3.0 or older, so everyone you
+  share with needs this version too. Mixing versions shows "incompatible
+  version".
+- Your ID, name, settings and saved people carry over.
+- If you unzip to a new folder, Windows Firewall asks again: tick both
+  boxes again (see FIRST RUN).
+- Close the old version before opening this one.
+
+
+FIRST RUN
+---------
+1. Unzip anywhere and double-click peeroxide.exe.
+
+2. "Windows protected your PC": the app isn't code-signed.
+   Click "More info" -> "Run anyway".
+
+3. Windows Firewall prompt: tick BOTH boxes, "Private networks" AND
+   "Public networks", then click Allow.
+   VPN adapters such as Radmin are usually classified as Public; if Public
+   is not ticked, nobody can connect to you or see you in the list.
+
+   Already clicked without ticking Public? Open Windows Security ->
+   Firewall & network protection -> Allow an app through firewall ->
+   Change settings -> find peeroxide -> tick Public -> OK.
+
+
+SHARING YOUR SCREEN
+-------------------
+- Under "Broadcast", pick a Source (a monitor or a window) and a Quality,
+  then click "Start broadcasting".
+- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 20 fps":
+  about 2 Mbps of upload, enough for most home connections.
+- To share sound, tick "Share audio" BEFORE you start. It is off by
+  default and remembered. What it shares depends on the source:
+    * a window:  only the sound of that window's app;
+    * a monitor: all sound on your PC (except Peeroxide itself), which
+                 includes voice calls and notifications;
+    * your microphone is never shared.
+  To turn sound on or off, stop broadcasting and start again.
+- Nothing is captured or sent until someone starts watching.
+
+
+WATCHING
+--------
+- People who are broadcasting appear under "Broadcasting on this network".
+  Click a name to watch; click another name to switch.
+- If they share sound, a speaker button (mute) and a volume slider appear
+  under "Watching ...". They only change what you hear, and are remembered.
+  Otherwise it says "The broadcaster isn't sharing audio".
+- Next to each name there is an ID like 7268-E22A. The broadcaster sees
+  their own ID at the top of their window. If they match, you are watching
+  the right person (the app refuses to connect if the ID is faked).
+
+
+SAVED
+-----
+- Everyone you watch is saved automatically (shown with a star).
+- If a saved person is broadcasting but doesn't show up in the list, look
+  under "Saved" and click their name to connect. The trash icon forgets them.
+- A red warning icon next to a name means someone is using the name of a
+  person you saved, but with a different ID. That happens after a
+  reinstall, but it could also be an impersonation: confirm the ID with them.
+
+
+IF SOMEONE NEVER SHOWS UP
+-------------------------
+Connect manually once; they are saved from then on.
+1. The broadcaster clicks "Copy connect string" and picks the entry for the
+   network you share - for Radmin, the one named "Radmin VPN" (26.x.x.x).
+2. They send you that text (chat, Discord, ...).
+3. You open "Connect manually", paste it, and click Watch.
+
+
+GOOD TO KNOW
+------------
+- Anyone who can reach you on the network can watch, and hear, while you
+  broadcast. Stop broadcasting when you're done.
+- Settings, your ID, saved people and logs are stored in:
+  %APPDATA%\Peeroxide\data

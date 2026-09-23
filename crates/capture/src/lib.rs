@@ -84,6 +84,16 @@ impl Source {
             Target::Scap(Some(scap::Target::Window(w))) => format!("window:{}", w.id),
         }
     }
+
+    /// The process that owns a window source; its sound is what sharing the window's audio
+    /// captures. `None` for monitors, the test pattern, or when the platform doesn't say.
+    pub fn process_id(&self) -> Option<u32> {
+        #[cfg(windows)]
+        if let Target::Window(h) = &self.target {
+            return windows::process_id(*h);
+        }
+        None
+    }
 }
 
 impl PartialEq for Source {
