@@ -54,8 +54,13 @@ impl ViewerState {
         match (self, input) {
             // Selecting while streaming is "switch": Streaming → Idle → Connecting in one step.
             (_, I::Select(peer)) => S::Connecting { peer },
+            // The identity is verified by now, so the broadcaster's own name replaces whatever
+            // label we had (e.g. just the ID for a pasted connect string).
             (S::Connecting { peer }, I::Connected { broadcaster_name }) => S::Streaming {
-                peer: peer.clone(),
+                peer: PeerRef {
+                    fingerprint: peer.fingerprint,
+                    name: broadcaster_name.clone(),
+                },
                 broadcaster_name,
             },
             (S::Connecting { .. } | S::Streaming { .. }, I::StopWatching) => S::Idle,
@@ -112,7 +117,11 @@ mod tests {
         let s = ViewerState::Idle.transition(ViewerInput::Select(peer(1)));
         assert_eq!(s, ViewerState::Connecting { peer: peer(1) });
         let s = s.transition(connected());
-        assert!(matches!(&s, ViewerState::Streaming { peer: p, .. } if *p == peer(1)));
+        assert!(matches!(
+            &s,
+            ViewerState::Streaming { peer: p, .. }
+                if p.fingerprint == peer(1).fingerprint && p.name == "b"
+        ));
         let s = s.transition(ViewerInput::Ended(SessionEnd::BroadcastStopped));
         assert!(
             matches!(&s, ViewerState::Disconnected { reason, .. } if reason.contains("stopped"))

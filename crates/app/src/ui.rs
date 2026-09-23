@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 use p2pss_capture::{Source, SourceKind, list_sources};
@@ -9,6 +9,7 @@ use p2pss_discovery::Peer;
 use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
+use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
 use crate::settings::Settings;
@@ -31,6 +32,8 @@ pub struct App {
     viewer: ViewerState,
     session: Option<SessionId>,
     peers: Vec<Peer>,
+    contacts: Contacts,
+    watch_target: Option<PeerTarget>,
     connect_input: String,
     watch_note: Option<String>,
     video: VideoView,
@@ -51,6 +54,8 @@ impl App {
             ctrl: Controller::new(identity, display_name, ctx)?,
             preset: settings.preset(),
             settings,
+            contacts: Contacts::load(&dir),
+            watch_target: None,
             dir,
             name_edit: None,
             sources: Vec::new(),
@@ -153,8 +158,16 @@ impl App {
         };
         self.broadcast_note = None;
         self.viewer_count = 0;
-        if let Err(e) = self.ctrl.start_broadcast(source, self.preset) {
-            self.broadcast_note = Some(format!("Could not start broadcasting: {e}"));
+        match self
+            .ctrl
+            .start_broadcast(source, self.preset, self.settings.broadcast_port)
+        {
+            Ok(port) if self.settings.broadcast_port != Some(port) => {
+                self.settings.broadcast_port = Some(port);
+                self.save_settings();
+            }
+            Ok(_) => {}
+            Err(e) => self.broadcast_note = Some(format!("Could not start broadcasting: {e}")),
         }
     }
 
@@ -165,7 +178,32 @@ impl App {
             fingerprint: target.fingerprint,
             name: target.name.clone(),
         }));
+        self.watch_target = Some(target.clone());
         self.session = Some(self.ctrl.watch(target));
+    }
+
+    /// The peer with a live or pending session (highlighted; clicking it again does nothing).
+    fn active_peer(&self) -> Option<String> {
+        self.viewer
+            .wants_session()
+            .then(|| self.viewer.peer())
+            .flatten()
+            .map(|p| p.fingerprint.to_hex())
+    }
+
+    fn remember_contact(&mut self, name: &str, remote: SocketAddr) {
+        let Some(target) = &self.watch_target else {
+            return;
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.contacts
+            .remember(&target.fingerprint, name, remote, &target.addrs, now);
+        if let Err(e) = self.contacts.save(&self.dir) {
+            tracing::warn!("could not save contacts: {e}");
+        }
     }
 
     fn apply(&mut self, input: ViewerInput) {
@@ -217,7 +255,11 @@ impl App {
                         continue;
                     }
                     let input = match event {
-                        SessionEvent::Connected { broadcaster_name } => {
+                        SessionEvent::Connected {
+                            broadcaster_name,
+                            remote,
+                        } => {
+                            self.remember_contact(&broadcaster_name, remote);
                             ViewerInput::Connected { broadcaster_name }
                         }
                         SessionEvent::Ended(end) => {
@@ -307,7 +349,7 @@ impl App {
             let (port, fingerprint) = (b.port, self.ctrl.fingerprint().to_hex());
             ui.horizontal(|ui| {
                 ui.weak(format!("UDP port {port}"));
-                ui.menu_button("Copy connect string ▾", |ui| {
+                ui.menu_button("Copy connect string", |ui| {
                     ui.weak("For viewers who can't see you in the list.\nPick the network they share with you:");
                     let adapters = local_ipv4s();
                     if adapters.is_empty() {
@@ -350,7 +392,7 @@ impl App {
             ui.weak(text);
             return;
         }
-        let watched = self.viewer.peer().map(|p| p.fingerprint.to_hex());
+        let watched = self.active_peer();
         let mut picked = None;
         egui::ScrollArea::vertical()
             .max_height(240.0)
@@ -362,18 +404,35 @@ impl App {
                         .unwrap_or_default();
                     let same_name = self.peers.iter().filter(|p| p.name == peer.name).count() > 1;
                     let selected = watched.as_deref() == Some(peer.fingerprint.as_str());
+                    let saved = self.contacts.get(&peer.fingerprint).is_some();
+                    let changed_id = self.contacts.name_conflict(&peer.name, &peer.fingerprint);
                     ui.horizontal(|ui| {
                         let addrs: Vec<String> =
                             peer.addrs.iter().map(ToString::to_string).collect();
+                        let icon = if saved { "★" } else { "🖵" };
                         let row = ui
-                            .selectable_label(selected, format!("🖵 {}", truncate(&peer.name, 24)))
+                            .selectable_label(
+                                selected,
+                                format!("{icon} {}", truncate(&peer.name, 24)),
+                            )
                             .on_hover_text(format!(
                                 "ID {short}\nFingerprint {}\n{}",
                                 peer.fingerprint,
                                 addrs.join("\n")
                             ));
                         ui.weak(&short);
-                        if same_name {
+                        if let Some(old) = changed_id {
+                            let old_id = Fingerprint::from_hex(&old.fingerprint)
+                                .map(|f| f.short())
+                                .unwrap_or_default();
+                            ui.colored_label(ui.visuals().error_fg_color, "⚠")
+                                .on_hover_text(format!(
+                                    "Not the {} you saved: their ID changed (was {old_id}).\n\
+                                     This happens after a reinstall, but it can also be someone \
+                                     impersonating them. Confirm the ID with the person.",
+                                    old.name
+                                ));
+                        } else if same_name && !saved {
                             ui.colored_label(ui.visuals().warn_fg_color, "⚠")
                                 .on_hover_text(
                                     "Another broadcaster uses the same name. Check the ID with the \
@@ -391,10 +450,77 @@ impl App {
         }
     }
 
+    /// Contacts that are not currently announcing themselves; reachable by their saved address.
+    fn saved_ui(&mut self, ui: &mut egui::Ui) {
+        let offline: Vec<Contact> = self
+            .contacts
+            .list()
+            .iter()
+            .filter(|c| !self.peers.iter().any(|p| p.fingerprint == c.fingerprint))
+            .cloned()
+            .collect();
+        if offline.is_empty() {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new("Saved").strong())
+            .on_hover_text("People you watched before. Click to connect at their last address.");
+        let watched = self.active_peer();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let (mut picked, mut removed) = (None, None);
+        egui::ScrollArea::vertical()
+            .id_salt("saved")
+            .max_height(200.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for c in &offline {
+                    let Some(fingerprint) = Fingerprint::from_hex(&c.fingerprint) else {
+                        continue;
+                    };
+                    let selected = watched.as_deref() == Some(c.fingerprint.as_str());
+                    ui.horizontal(|ui| {
+                        let addrs: Vec<String> = c.addrs.iter().map(ToString::to_string).collect();
+                        let row = ui
+                            .selectable_label(selected, format!("☆ {}", truncate(&c.name, 22)))
+                            .on_hover_text(format!(
+                                "ID {}\nLast watched {}\n{}",
+                                fingerprint.short(),
+                                ago(now, c.last_seen),
+                                addrs.join("\n")
+                            ));
+                        ui.weak(fingerprint.short());
+                        if ui.small_button("🗑").on_hover_text("Forget").clicked() {
+                            removed = Some(c.fingerprint.clone());
+                        }
+                        if row.clicked() && !selected {
+                            picked = Some(PeerTarget {
+                                fingerprint,
+                                name: c.name.clone(),
+                                addrs: c.addrs.clone(),
+                            });
+                        }
+                    });
+                }
+            });
+        if let Some(fp) = removed {
+            self.contacts.remove(&fp);
+            if let Err(e) = self.contacts.save(&self.dir) {
+                tracing::warn!("could not save contacts: {e}");
+            }
+        }
+        if let Some(target) = picked {
+            self.watch(target);
+        }
+    }
+
     fn watch_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Watch");
         ui.add_space(4.0);
         self.peer_list_ui(ui);
+        self.saved_ui(ui);
         ui.add_space(8.0);
 
         match self.viewer.clone() {

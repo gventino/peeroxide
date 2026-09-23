@@ -36,7 +36,11 @@ pub enum SessionEnd {
 
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
-    Connected { broadcaster_name: String },
+    /// `remote` is the broadcaster address that answered (the first reachable one tried).
+    Connected {
+        broadcaster_name: String,
+        remote: SocketAddr,
+    },
     Ended(SessionEnd),
 }
 
@@ -224,7 +228,10 @@ async fn session(
     };
     let mut send = match timeout(HANDSHAKE_TIMEOUT, handshake).await {
         Ok(Ok((send, Some(ServerMsg::Welcome { broadcaster_name })))) => {
-            events(SessionEvent::Connected { broadcaster_name });
+            events(SessionEvent::Connected {
+                broadcaster_name,
+                remote: conn.remote_address(),
+            });
             send
         }
         _ => return end_reason(conn).await,

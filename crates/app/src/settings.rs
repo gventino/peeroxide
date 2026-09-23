@@ -11,6 +11,8 @@ const FILE: &str = "settings.toml";
 pub struct Settings {
     pub display_name: Option<String>,
     pub preset: Option<String>,
+    /// Reused on every broadcast so connect strings and saved contacts stay valid.
+    pub broadcast_port: Option<u16>,
 }
 
 impl Settings {
@@ -48,6 +50,7 @@ mod tests {
         let s = Settings {
             display_name: Some("Ana".into()),
             preset: Some(Preset::P720.name.into()),
+            broadcast_port: Some(50123),
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());

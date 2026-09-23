@@ -164,7 +164,8 @@ async fn two_viewers_get_ordered_frames_starting_with_a_keyframe() {
     for v in &mut viewers {
         assert!(matches!(
             v.event().await,
-            SessionEvent::Connected { broadcaster_name } if broadcaster_name == "server-1"
+            SessionEvent::Connected { broadcaster_name, remote }
+                if broadcaster_name == "server-1" && remote == ts.addr()
         ));
         let first = v.frame().await;
         assert!(first.keyframe, "first frame must be a keyframe");
@@ -338,6 +339,31 @@ async fn switching_broadcasters_moves_the_single_session() {
     assert_eq!(v.frame().await.data[0], 0xB);
     a.wait_viewers(0).await;
     b.wait_viewers(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn connected_reports_the_address_that_answered() {
+    let ts = TestServer::simple(1);
+    let client = ViewerClient::new().unwrap();
+    let dead = std::net::UdpSocket::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let (etx, mut events) = mpsc::unbounded_channel();
+    let _handle = client.watch(
+        vec![dead, ts.addr()],
+        ts.identity.fingerprint(),
+        "tester".into(),
+        |_| {},
+        move |_, e| {
+            let _ = etx.send(e);
+        },
+    );
+    let event = timeout(WAIT, events.recv()).await.unwrap().unwrap();
+    assert!(
+        matches!(event, SessionEvent::Connected { remote, .. } if remote == ts.addr()),
+        "{event:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

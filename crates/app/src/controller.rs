@@ -9,8 +9,8 @@ use p2pss_capture::Source;
 use p2pss_codec::Preset;
 use p2pss_discovery::{Discovery, Peer};
 use p2pss_net::{
-    BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
-    StopReason, ViewerClient,
+    BroadcastServer, Fingerprint, Identity, NetError, ServerOptions, SessionEvent, SessionHandle,
+    SessionId, StopReason, ViewerClient,
 };
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
@@ -19,6 +19,28 @@ use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
 use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
 
 pub const MAX_VIEWERS: usize = 8;
+
+/// Binds the broadcast server to `preferred_port`, falling back to a random port if it is taken.
+/// Must be called inside the Tokio runtime.
+fn start_server(
+    identity: &Identity,
+    name: &str,
+    preferred_port: Option<u16>,
+    on_keyframe_request: impl Fn() + Send + Sync + Clone + 'static,
+) -> Result<BroadcastServer, NetError> {
+    let options = |port| ServerOptions {
+        name: name.to_owned(),
+        max_viewers: MAX_VIEWERS,
+        bind: SocketAddr::from(([0, 0, 0, 0], port)),
+    };
+    if let Some(port) = preferred_port.filter(|p| *p != 0) {
+        match BroadcastServer::start(identity, options(port), on_keyframe_request.clone()) {
+            Ok(server) => return Ok(server),
+            Err(e) => tracing::warn!("port {port} unavailable ({e}); using a random port"),
+        }
+    }
+    BroadcastServer::start(identity, options(0), on_keyframe_request)
+}
 
 /// Usable IPv4 addresses per network adapter (LAN, and virtual LANs such as Hamachi or Radmin).
 pub fn local_ipv4s() -> Vec<(String, Ipv4Addr)> {
@@ -167,7 +189,14 @@ impl Controller {
         }
     }
 
-    pub fn start_broadcast(&mut self, source: Source, preset: Preset) -> anyhow::Result<()> {
+    /// Starts broadcasting on `preferred_port` when it is free (a random port otherwise) and
+    /// returns the port actually used.
+    pub fn start_broadcast(
+        &mut self,
+        source: Source,
+        preset: Preset,
+        preferred_port: Option<u16>,
+    ) -> anyhow::Result<u16> {
         self.stop_broadcast(StopReason::Stopped);
         let _guard = self.rt.enter();
         self.generation += 1;
@@ -175,13 +204,10 @@ impl Controller {
 
         // Capture/encode stay paused until the first viewer arrives.
         let control = EncoderControl::new(false);
-        let server = Arc::new(BroadcastServer::start(
+        let server = Arc::new(start_server(
             &self.identity,
-            ServerOptions {
-                name: self.display_name.clone(),
-                max_viewers: MAX_VIEWERS,
-                bind: SocketAddr::from(([0, 0, 0, 0], 0)),
-            },
+            &self.display_name,
+            preferred_port,
             {
                 let control = control.clone();
                 move || control.request_keyframe()
@@ -240,7 +266,7 @@ impl Controller {
             server,
             viewers_task,
         });
-        Ok(())
+        Ok(port)
     }
 
     pub fn stop_broadcast(&mut self, reason: StopReason) {
@@ -315,5 +341,31 @@ impl Drop for Controller {
             self.rt.block_on(b.server.stop(StopReason::Stopped));
         }
         self.rt.block_on(self.client.close());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_reuses_the_preferred_port_or_falls_back() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let id = Identity::generate().unwrap();
+        let free = std::net::UdpSocket::bind("0.0.0.0:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+
+        let first = start_server(&id, "t", Some(free), || {}).unwrap();
+        assert_eq!(first.local_addr().unwrap().port(), free);
+
+        let taken = start_server(&id, "t", Some(free), || {}).unwrap();
+        assert_ne!(taken.local_addr().unwrap().port(), free);
+
+        let random = start_server(&id, "t", None, || {}).unwrap();
+        assert_ne!(random.local_addr().unwrap().port(), 0);
     }
 }
