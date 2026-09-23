@@ -4,7 +4,7 @@ Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the 
 
 **Status: MVP.** Video only; audio is planned (FR-14). Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
 
-Design documents: [functional requirements](functional-requirements.md) · [non-functional requirements](non-functional-requirements.md) · [use cases](use-cases.md) · [abuse cases (STRIDE)](abuse-cases.md)
+Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md)
 
 ## Using it
 
@@ -87,7 +87,7 @@ Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.264 → R
 
 ## Security
 
-Mapping to [abuse-cases.md](abuse-cases.md):
+Mapping to [abuse-cases.md](docs/abuse-cases.md):
 
 | Abuse case | MVP mitigation |
 |---|---|
@@ -123,7 +123,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux. It hasn't run yet because the repository is local only; it's the quickest way to compile-check the macOS/Linux code once the repo is hosted.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
 Automated tests (59) cover:
 - the wire protocol, including malformed and oversized input;
@@ -166,3 +166,7 @@ In the platform's application-data directory; on Windows, `%APPDATA%\P2P Screen 
 - `settings.toml`: display name, quality preset and broadcast port.
 - `contacts.toml`: saved broadcasters (ID, name, last working addresses).
 - `logs/session.log.YYYY-MM-DD`: session log.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). The software is provided "as is", without warranty of any kind.
