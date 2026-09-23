@@ -16,9 +16,15 @@ p2pss-capture = { version = "0.1.0", path = "../capture" }
 p2pss-codec = { version = "0.1.0", path = "../codec" }
 p2pss-discovery = { version = "0.1.0", path = "../discovery" }
 p2pss-net = { version = "0.1.0", path = "../net" }
+serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
+toml = "1.1.6"
 tracing = "0.1.44"
+tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -126,7 +126,7 @@ impl ViewerClient {
                 cancel_rx,
             )
             .await;
-            tracing::debug!(?end, "viewer session ended");
+            tracing::info!(?end, %fingerprint, "viewer session ended");
             events(SessionEvent::Ended(end));
         });
         SessionHandle {

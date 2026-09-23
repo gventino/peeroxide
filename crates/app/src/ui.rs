@@ -1,4 +1,5 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, RichText};
@@ -10,13 +11,18 @@ use p2pss_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 use crate::Args;
 use crate::controller::{Controller, Event, PeerTarget};
 use crate::encoder::EncoderEnd;
+use crate::settings::Settings;
 use crate::video::VideoView;
 use crate::viewer_state::{PeerRef, ViewerInput, ViewerState, describe};
 
 const LIVE_RED: Color32 = Color32::from_rgb(230, 70, 70);
+const MAX_NAME_CHARS: usize = 40;
 
 pub struct App {
     ctrl: Controller,
+    settings: Settings,
+    dir: PathBuf,
+    name_edit: Option<String>,
     sources: Vec<Source>,
     selected: usize,
     preset: Preset,
@@ -37,13 +43,18 @@ impl App {
         args: Args,
         identity: Identity,
         display_name: String,
+        settings: Settings,
+        dir: PathBuf,
         ctx: egui::Context,
     ) -> anyhow::Result<Self> {
         let mut app = Self {
             ctrl: Controller::new(identity, display_name, ctx)?,
+            preset: settings.preset(),
+            settings,
+            dir,
+            name_edit: None,
             sources: Vec::new(),
             selected: 0,
-            preset: Preset::default(),
             viewer_count: 0,
             broadcast_note: None,
             viewer: ViewerState::Idle,
@@ -73,6 +84,51 @@ impl App {
             }
         }
         Ok(app)
+    }
+
+    fn save_settings(&self) {
+        if let Err(e) = self.settings.save(&self.dir) {
+            tracing::warn!("could not save settings: {e}");
+        }
+    }
+
+    fn identity_ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(edit) = &mut self.name_edit {
+            let response = ui.add(
+                egui::TextEdit::singleline(edit)
+                    .char_limit(MAX_NAME_CHARS)
+                    .desired_width(220.0),
+            );
+            response.request_focus();
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if ui.button("Save").clicked() || enter {
+                let name = edit.trim().to_string();
+                if !name.is_empty() {
+                    self.ctrl.set_display_name(name.clone());
+                    self.settings.display_name = Some(name);
+                    self.save_settings();
+                }
+                self.name_edit = None;
+            } else if escape {
+                self.name_edit = None;
+            }
+        } else {
+            ui.label(RichText::new(self.ctrl.display_name()).strong());
+            let live = self.ctrl.broadcast.is_some();
+            let edit = ui
+                .add_enabled(!live, egui::Button::new("✏").small())
+                .on_hover_text("Change the name others see")
+                .on_disabled_hover_text("Stop broadcasting to change your name");
+            if edit.clicked() {
+                self.name_edit = Some(self.ctrl.display_name().to_string());
+            }
+        }
+        ui.weak(format!("ID {}", self.ctrl.fingerprint().short()))
+            .on_hover_text(
+                "Your fingerprint. Viewers see it next to your name and can compare it \
+                 with you to rule out impersonation.",
+            );
     }
 
     fn refresh_sources(&mut self) {
@@ -211,6 +267,7 @@ impl App {
                     }
                 });
             ui.label("Quality");
+            let before = self.preset;
             egui::ComboBox::from_id_salt("preset")
                 .width(ui.available_width())
                 .selected_text(self.preset.name)
@@ -219,6 +276,10 @@ impl App {
                         ui.selectable_value(&mut self.preset, p, p.name);
                     }
                 });
+            if self.preset != before {
+                self.settings.preset = Some(self.preset.name.into());
+                self.save_settings();
+            }
         });
         ui.add_space(6.0);
 
@@ -243,7 +304,8 @@ impl App {
                     r.fps, r.kbps, r.avg_ms
                 ));
             }
-            let connect = format!("127.0.0.1:{}#{}", b.port, self.ctrl.fingerprint().to_hex());
+            let ip = lan_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+            let connect = format!("{ip}:{}#{}", b.port, self.ctrl.fingerprint().to_hex());
             ui.horizontal(|ui| {
                 ui.weak(format!("UDP port {}", b.port));
                 if ui
@@ -403,14 +465,7 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("identity").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(self.ctrl.display_name()).strong());
-                ui.weak(format!("ID {}", self.ctrl.fingerprint().short()))
-                    .on_hover_text(
-                        "Your fingerprint. Viewers see it next to your name and can compare it \
-                         with you to rule out impersonation.",
-                    );
-            });
+            ui.horizontal(|ui| self.identity_ui(ui));
         });
 
         egui::Panel::left("controls")
@@ -454,6 +509,13 @@ pub fn parse_connect(s: &str) -> Result<PeerTarget, String> {
         name: fingerprint.short(),
         addrs: vec![addr],
     })
+}
+
+/// The address this machine would use to reach the LAN. `connect` on UDP sends no packets.
+fn lan_ip() -> Option<IpAddr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    Some(socket.local_addr().ok()?.ip())
 }
 
 fn find_source(sources: &[Source], query: &str) -> Option<usize> {

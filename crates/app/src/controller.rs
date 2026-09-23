@@ -136,6 +136,12 @@ impl Controller {
         &self.display_name
     }
 
+    /// Takes effect for the next broadcast and the next watch session.
+    pub fn set_display_name(&mut self, name: String) {
+        tracing::info!(%name, "display name changed");
+        self.display_name = name;
+    }
+
     fn emitter(&self) -> impl Fn(Event) + Send + Sync + Clone + 'static {
         let tx = self.events_tx.clone();
         let ctx = self.ctx.clone();

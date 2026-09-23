@@ -1,6 +1,7 @@
 mod controller;
 mod decoder;
 mod encoder;
+mod settings;
 mod stats;
 mod ui;
 mod video;
@@ -55,16 +56,33 @@ pub fn data_dir(profile: Option<&str>) -> PathBuf {
     }
 }
 
-fn main() -> eframe::Result {
-    let args = Args::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,p2pss=debug,wgpu_hal=warn,egui_wgpu=warn".into()),
+/// Logs to stdout and to a daily-rotated file under `<data dir>/logs`, which doubles as the
+/// local session record (who broadcast/watched what, and when).
+fn init_logging(dir: &std::path::Path) -> tracing_appender::non_blocking::WorkerGuard {
+    use tracing_subscriber::prelude::*;
+    let (file, guard) = tracing_appender::non_blocking(tracing_appender::rolling::daily(
+        dir.join("logs"),
+        "session.log",
+    ));
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,p2pss=debug,wgpu_hal=warn,egui_wgpu=warn".into());
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(file),
         )
         .init();
+    guard
+}
 
+fn main() -> eframe::Result {
+    let args = Args::parse();
     let dir = data_dir(args.profile.as_deref());
+    let _log_guard = init_logging(&dir);
+
     let identity = Identity::load_or_create(&dir).unwrap_or_else(|e| {
         tracing::warn!(
             "could not load identity from {}: {e}; using a temporary one",
@@ -72,13 +90,18 @@ fn main() -> eframe::Result {
         );
         Identity::generate().expect("generate identity")
     });
-    let display_name = args.name.clone().unwrap_or_else(|| {
-        let host = gethostname::gethostname().to_string_lossy().into_owned();
-        match &args.profile {
-            Some(p) => format!("{host} ({p})"),
-            None => host,
-        }
-    });
+    let settings = settings::Settings::load(&dir);
+    let display_name = args
+        .name
+        .clone()
+        .or_else(|| settings.display_name.clone())
+        .unwrap_or_else(|| {
+            let host = gethostname::gethostname().to_string_lossy().into_owned();
+            match &args.profile {
+                Some(p) => format!("{host} ({p})"),
+                None => host,
+            }
+        });
     tracing::info!(name = %display_name, fingerprint = %identity.fingerprint(), dir = %dir.display(), "starting");
 
     let title = match &args.profile {
@@ -95,7 +118,14 @@ fn main() -> eframe::Result {
         &title,
         options,
         Box::new(move |cc| {
-            let app = ui::App::new(args, identity, display_name, cc.egui_ctx.clone())?;
+            let app = ui::App::new(
+                args,
+                identity,
+                display_name,
+                settings,
+                dir,
+                cc.egui_ctx.clone(),
+            )?;
             Ok(Box::new(app))
         }),
     )
