@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use peeroxide_audio::{AudioCapture, AudioChunk, AudioSource, Next, start_capture};
 use peeroxide_capture::{Source, SourceKind};
 use peeroxide_codec::opus::{CHANNELS, FRAME_LEN, SAMPLE_RATE};
@@ -138,7 +138,7 @@ fn run(
             Next::Chunk(chunk) => s.framer.push(chunk),
             // Nothing is playing: send what's left of the last sound instead of holding it.
             Next::Timeout => s.framer.flush(),
-            Next::Failed(e) => bail!(e),
+            Next::Failed(e) => return Err(e),
         }
         while let Some((pcm, captured_at)) = s.framer.pop() {
             let started = Instant::now();

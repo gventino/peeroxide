@@ -18,6 +18,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
+
 pub use output::{AudioOutput, OutputControl};
 pub use playout::{Placement, Playout, PlayoutStats};
 
@@ -43,16 +45,6 @@ pub struct AudioChunk {
     pub captured_at: Instant,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum AudioError {
-    #[error("audio sharing isn't available on this system yet")]
-    Unsupported,
-    #[error("no audio output device")]
-    NoOutputDevice,
-    #[error("{0}")]
-    Backend(String),
-}
-
 /// Whether `source` can be captured on this platform at all (see [`check`] for this machine).
 pub fn is_supported(source: &AudioSource) -> bool {
     match source {
@@ -62,14 +54,14 @@ pub fn is_supported(source: &AudioSource) -> bool {
 }
 
 /// Checks that `source` can be captured on this machine by opening it and closing it again.
-pub fn check(source: &AudioSource) -> Result<(), AudioError> {
+pub fn check(source: &AudioSource) -> anyhow::Result<()> {
     match source {
         AudioSource::TestTone => Ok(()),
         #[cfg(windows)]
         AudioSource::System { .. } | AudioSource::Application { .. } => loopback::check(*source),
         #[cfg(not(windows))]
         AudioSource::System { .. } | AudioSource::Application { .. } => {
-            Err(AudioError::Unsupported)
+            anyhow::bail!("audio sharing isn't available on this system yet")
         }
     }
 }
@@ -78,7 +70,7 @@ pub enum Next {
     Chunk(AudioChunk),
     /// Nothing new yet. Loopback capture may deliver nothing at all while the source is silent.
     Timeout,
-    Failed(String),
+    Failed(anyhow::Error),
 }
 
 /// Chunks buffered between the capture thread and its reader before new ones are dropped.
@@ -86,7 +78,7 @@ const QUEUE: usize = 64;
 
 /// A running capture. Dropping it stops the capture thread.
 pub struct AudioCapture {
-    rx: Receiver<Result<AudioChunk, String>>,
+    rx: Receiver<anyhow::Result<AudioChunk>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -98,7 +90,7 @@ impl AudioCapture {
             Ok(Ok(chunk)) => Next::Chunk(chunk),
             Ok(Err(e)) => Next::Failed(e),
             Err(RecvTimeoutError::Timeout) => Next::Timeout,
-            Err(RecvTimeoutError::Disconnected) => Next::Failed("audio capture stopped".into()),
+            Err(RecvTimeoutError::Disconnected) => Next::Failed(anyhow!("audio capture stopped")),
         }
     }
 }
@@ -115,7 +107,7 @@ impl Drop for AudioCapture {
 /// Where a capture thread delivers its chunks. Never blocks: if the reader falls behind, chunks
 /// are dropped.
 pub(crate) struct Sink {
-    tx: SyncSender<Result<AudioChunk, String>>,
+    tx: SyncSender<anyhow::Result<AudioChunk>>,
     pub(crate) stop: Arc<AtomicBool>,
 }
 
@@ -130,13 +122,13 @@ impl Sink {
         }
     }
 
-    pub(crate) fn fail(&self, error: String) {
+    pub(crate) fn fail(&self, error: anyhow::Error) {
         let _ = self.tx.try_send(Err(error));
     }
 }
 
 /// Starts capturing `source` on its own thread.
-pub fn start_capture(source: &AudioSource) -> Result<AudioCapture, AudioError> {
+pub fn start_capture(source: &AudioSource) -> anyhow::Result<AudioCapture> {
     let (tx, rx) = std::sync::mpsc::sync_channel(QUEUE);
     let stop = Arc::new(AtomicBool::new(false));
     let sink = Sink {
@@ -151,7 +143,7 @@ pub fn start_capture(source: &AudioSource) -> Result<AudioCapture, AudioError> {
         }
         #[cfg(not(windows))]
         AudioSource::System { .. } | AudioSource::Application { .. } => {
-            return Err(AudioError::Unsupported);
+            anyhow::bail!("audio sharing isn't available on this system yet");
         }
     };
     Ok(AudioCapture {

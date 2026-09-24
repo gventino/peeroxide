@@ -5,7 +5,9 @@ use std::f32::consts::TAU;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::{AudioChunk, AudioError, CHANNELS, SAMPLE_RATE, Sink};
+use anyhow::Context;
+
+use crate::{AudioChunk, CHANNELS, SAMPLE_RATE, Sink};
 
 const CHUNK_FRAMES: usize = 480;
 const FREQ: f32 = 440.0;
@@ -36,7 +38,7 @@ pub(crate) fn render(start_us: u64, frames: usize) -> Vec<f32> {
     out
 }
 
-pub(crate) fn start(sink: Sink) -> Result<JoinHandle<()>, AudioError> {
+pub(crate) fn start(sink: Sink) -> anyhow::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name("audio-tone".into())
         .spawn(move || {
@@ -62,7 +64,7 @@ pub(crate) fn start(sink: Sink) -> Result<JoinHandle<()>, AudioError> {
                 start_us += chunk.as_micros() as u64;
             }
         })
-        .map_err(|e| AudioError::Backend(e.to_string()))
+        .context("could not start the test tone thread")
 }
 
 #[cfg(test)]

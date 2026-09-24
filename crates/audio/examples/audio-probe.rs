@@ -9,11 +9,12 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use peeroxide_audio::{
     AudioOutput, AudioSource, CHANNELS, Next, OutputControl, SAMPLE_RATE, check, start_capture,
 };
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let play = args.iter().any(|a| a == "--play");
     let mut positional = args.iter().filter(|a| !a.starts_with("--"));
@@ -23,7 +24,9 @@ fn main() {
         },
         Some("tone") => AudioSource::TestTone,
         Some(pid) => AudioSource::Application {
-            pid: pid.parse().expect("system, tone or a process id"),
+            pid: pid
+                .parse()
+                .with_context(|| format!("expected system, tone or a process id, got {pid}"))?,
         },
     };
     let secs: u64 = positional.next().and_then(|a| a.parse().ok()).unwrap_or(3);
@@ -31,11 +34,11 @@ fn main() {
     match check(&source) {
         Ok(()) => println!("{source:?}: available"),
         Err(e) => {
-            println!("{source:?}: {e}");
-            return;
+            println!("{source:?}: {e:#}");
+            return Ok(());
         }
     }
-    let capture = start_capture(&source).expect("start capture");
+    let capture = start_capture(&source).context("starting the capture")?;
     println!("recording {secs}s…");
     let started = Instant::now();
     let (mut samples, mut chunks, mut peak) = (Vec::new(), 0u32, 0.0f32);
@@ -49,7 +52,7 @@ fn main() {
             }
             Next::Timeout => {}
             Next::Failed(e) => {
-                println!("capture failed: {e}");
+                println!("capture failed: {e:#}");
                 break;
             }
         }
@@ -67,15 +70,15 @@ fn main() {
     drop(capture);
     let seconds = samples.len() as f64 / CHANNELS as f64 / f64::from(SAMPLE_RATE);
     println!("captured {seconds:.2}s of audio (some systems deliver nothing while silent)");
-    write_wav("audio-probe.wav", &samples).expect("write wav");
+    write_wav("audio-probe.wav", &samples).context("writing audio-probe.wav")?;
     println!("wrote audio-probe.wav");
 
     let control = OutputControl::new(1.0, !play);
     let mut output = match AudioOutput::open(control) {
         Ok(o) => o,
         Err(e) => {
-            println!("output: {e}");
-            return;
+            println!("output: {e:#}");
+            return Ok(());
         }
     };
     let frames = if play {
@@ -108,6 +111,7 @@ fn main() {
             ""
         }
     );
+    Ok(())
 }
 
 fn write_wav(path: &str, samples: &[f32]) -> std::io::Result<()> {

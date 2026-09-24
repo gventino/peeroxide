@@ -7,11 +7,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+use anyhow::{Context, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::{AudioError, CHANNELS, SAMPLE_RATE};
+use crate::{CHANNELS, SAMPLE_RATE};
 
 /// Per-sample smoothing of gain changes (about 5 ms), so moving the slider doesn't click.
 const GAIN_SMOOTHING: f32 = 0.005;
@@ -84,18 +85,16 @@ pub struct AudioOutput {
 impl AudioOutput {
     /// Opens the default output device, at 48 kHz if it takes it (no resampling), otherwise at
     /// its own rate.
-    pub fn open(control: Arc<OutputControl>) -> Result<Self, AudioError> {
+    pub fn open(control: Arc<OutputControl>) -> anyhow::Result<Self> {
         let device = cpal::default_host()
             .default_output_device()
-            .ok_or(AudioError::NoOutputDevice)?;
-        let default = device
-            .default_output_config()
-            .map_err(|e| AudioError::Backend(format!("audio output: {e}")))?;
+            .context("no audio output device")?;
+        let default = device.default_output_config().context("audio output")?;
         let mut rates = vec![SAMPLE_RATE];
         if default.sample_rate() != SAMPLE_RATE {
             rates.push(default.sample_rate());
         }
-        let mut last_error = String::new();
+        let mut last_error = anyhow!("no output configuration to try");
         for rate in rates {
             let config = StreamConfig {
                 channels: default.channels(),
@@ -109,11 +108,7 @@ impl AudioOutput {
                 SampleFormat::I16 => build::<i16>(&device, config, consumer, &control, &shared),
                 SampleFormat::I32 => build::<i32>(&device, config, consumer, &control, &shared),
                 SampleFormat::U16 => build::<u16>(&device, config, consumer, &control, &shared),
-                other => {
-                    return Err(AudioError::Backend(format!(
-                        "unsupported output sample format {other}"
-                    )));
-                }
+                other => bail!("unsupported output sample format {other}"),
             };
             match built.and_then(|s| s.play().map(|()| s)) {
                 Ok(stream) => {
@@ -132,10 +127,10 @@ impl AudioOutput {
                         scratch: Vec::new(),
                     });
                 }
-                Err(e) => last_error = e.to_string(),
+                Err(e) => last_error = e.into(),
             }
         }
-        Err(AudioError::Backend(format!("audio output: {last_error}")))
+        Err(last_error.context("audio output"))
     }
 
     /// How long until something queued now starts playing (queued samples plus the device's own
