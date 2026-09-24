@@ -2,9 +2,10 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use anyhow::{Context, bail, ensure};
 use opus_rs::Application;
 
-use crate::{AudioDecoder, AudioEncoder, CodecError};
+use crate::{AudioDecoder, AudioEncoder};
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
@@ -15,19 +16,17 @@ pub const FRAME_LEN: usize = FRAME_SAMPLES * CHANNELS;
 /// Largest single-frame Opus packet (RFC 6716: 1275-byte frame plus the ToC byte).
 pub const MAX_PACKET: usize = 1276;
 
-fn codec_err(e: &str) -> CodecError {
-    CodecError::Codec(e.to_string())
-}
-
 pub struct OpusEncoder {
     inner: opus_rs::OpusEncoder,
     out: Vec<u8>,
 }
 
 impl OpusEncoder {
-    pub fn new(bitrate_bps: u32) -> Result<Self, CodecError> {
+    pub fn new(bitrate_bps: u32) -> anyhow::Result<Self> {
+        // opus-rs reports errors as plain `&str`s.
         let mut inner = opus_rs::OpusEncoder::new(SAMPLE_RATE as i32, CHANNELS, Application::Audio)
-            .map_err(codec_err)?;
+            .map_err(anyhow::Error::msg)
+            .context("could not create the Opus encoder")?;
         inner.bitrate_bps = i32::try_from(bitrate_bps).unwrap_or(i32::MAX);
         Ok(Self {
             inner,
@@ -37,17 +36,17 @@ impl OpusEncoder {
 }
 
 impl AudioEncoder for OpusEncoder {
-    fn encode(&mut self, pcm: &[f32]) -> Result<Vec<u8>, CodecError> {
-        if pcm.len() != FRAME_LEN {
-            return Err(CodecError::InvalidInput(format!(
-                "expected {FRAME_LEN} samples, got {}",
-                pcm.len()
-            )));
-        }
+    fn encode(&mut self, pcm: &[f32]) -> anyhow::Result<Vec<u8>> {
+        ensure!(
+            pcm.len() == FRAME_LEN,
+            "invalid frame: expected {FRAME_LEN} samples, got {}",
+            pcm.len()
+        );
         let n = self
             .inner
             .encode(pcm, FRAME_SAMPLES, &mut self.out)
-            .map_err(codec_err)?;
+            .map_err(anyhow::Error::msg)
+            .context("Opus encoding")?;
         Ok(self.out[..n].to_vec())
     }
 }
@@ -57,21 +56,22 @@ pub struct OpusDecoder {
 }
 
 impl OpusDecoder {
-    pub fn new() -> Result<Self, CodecError> {
+    pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
-            inner: opus_rs::OpusDecoder::new(SAMPLE_RATE as i32, CHANNELS).map_err(codec_err)?,
+            inner: opus_rs::OpusDecoder::new(SAMPLE_RATE as i32, CHANNELS)
+                .map_err(anyhow::Error::msg)
+                .context("could not create the Opus decoder")?,
         })
     }
 }
 
 impl AudioDecoder for OpusDecoder {
-    fn decode(&mut self, packet: &[u8]) -> Result<Vec<f32>, CodecError> {
-        if packet.is_empty() || packet.len() > MAX_PACKET {
-            return Err(CodecError::InvalidInput(format!(
-                "packet of {} bytes",
-                packet.len()
-            )));
-        }
+    fn decode(&mut self, packet: &[u8]) -> anyhow::Result<Vec<f32>> {
+        ensure!(
+            !packet.is_empty() && packet.len() <= MAX_PACKET,
+            "invalid packet of {} bytes",
+            packet.len()
+        );
         let mut pcm = vec![0.0; FRAME_LEN];
         // The packet comes from the network: a decoder bug must cost one packet, not the thread.
         let decoded = catch_unwind(AssertUnwindSafe(|| {
@@ -79,14 +79,12 @@ impl AudioDecoder for OpusDecoder {
         }));
         match decoded {
             Ok(Ok(n)) if n == FRAME_SAMPLES => Ok(pcm),
-            Ok(Ok(n)) => Err(CodecError::InvalidInput(format!(
-                "packet holds {n} samples, expected {FRAME_SAMPLES}"
-            ))),
-            Ok(Err(e)) => Err(codec_err(e)),
+            Ok(Ok(n)) => bail!("invalid packet: holds {n} samples, expected {FRAME_SAMPLES}"),
+            Ok(Err(e)) => Err(anyhow::Error::msg(e).context("Opus decoding")),
             Err(_) => {
                 // Its state is unknown after a panic; start over.
                 *self = Self::new()?;
-                Err(codec_err("decoder panicked"))
+                bail!("the Opus decoder panicked")
             }
         }
     }

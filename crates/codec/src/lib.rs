@@ -72,14 +72,6 @@ pub struct DecodedFrame {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CodecError {
-    #[error("invalid frame: {0}")]
-    InvalidInput(String),
-    #[error("codec error: {0}")]
-    Codec(String),
-}
-
 /// Hardware encoders (NVENC, VideoToolbox, ...) can be added later behind this trait.
 pub trait VideoEncoder: Send {
     /// Encodes one BGRA picture. Returns `None` if the encoder skipped the frame.
@@ -88,7 +80,7 @@ pub trait VideoEncoder: Send {
         bgra: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Option<EncodedFrame>, CodecError>;
+    ) -> anyhow::Result<Option<EncodedFrame>>;
 
     /// The next encoded frame will be an IDR keyframe.
     fn request_keyframe(&mut self);
@@ -96,15 +88,15 @@ pub trait VideoEncoder: Send {
 
 pub trait VideoDecoder: Send {
     /// Decodes one Annex-B access unit. Returns `None` if no picture is ready yet.
-    fn decode(&mut self, data: &[u8]) -> Result<Option<DecodedFrame>, CodecError>;
+    fn decode(&mut self, data: &[u8]) -> anyhow::Result<Option<DecodedFrame>>;
 }
 
 /// Encodes one 20 ms frame of 48 kHz interleaved stereo audio ([`opus::FRAME_LEN`] samples).
 pub trait AudioEncoder: Send {
-    fn encode(&mut self, pcm: &[f32]) -> Result<Vec<u8>, CodecError>;
+    fn encode(&mut self, pcm: &[f32]) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Decodes one packet into a 20 ms frame of 48 kHz interleaved stereo audio.
 pub trait AudioDecoder: Send {
-    fn decode(&mut self, packet: &[u8]) -> Result<Vec<f32>, CodecError>;
+    fn decode(&mut self, packet: &[u8]) -> anyhow::Result<Vec<f32>>;
 }

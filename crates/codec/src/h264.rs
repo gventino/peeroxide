@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use anyhow::{Context, ensure};
 use openh264::OpenH264API;
 use openh264::decoder::{Decoder, DecoderConfig};
 use openh264::encoder::{
@@ -8,11 +9,7 @@ use openh264::encoder::{
 };
 use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
 
-use crate::{CodecError, DecodedFrame, EncodedFrame, Preset, VideoDecoder, VideoEncoder};
-
-fn codec_err(e: impl std::fmt::Display) -> CodecError {
-    CodecError::Codec(e.to_string())
-}
+use crate::{DecodedFrame, EncodedFrame, Preset, VideoDecoder, VideoEncoder};
 
 pub struct H264Encoder {
     inner: Encoder,
@@ -23,7 +20,7 @@ pub struct H264Encoder {
 }
 
 impl H264Encoder {
-    pub fn new(preset: &Preset) -> Result<Self, CodecError> {
+    pub fn new(preset: &Preset) -> anyhow::Result<Self> {
         let config = EncoderConfig::new()
             .usage_type(UsageType::CameraVideoRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
@@ -33,8 +30,8 @@ impl H264Encoder {
             .scene_change_detect(false)
             .complexity(Complexity::Low)
             .intra_frame_period(IntraFramePeriod::from_num_frames(preset.fps * 10));
-        let inner =
-            Encoder::with_api_config(OpenH264API::from_source(), config).map_err(codec_err)?;
+        let inner = Encoder::with_api_config(OpenH264API::from_source(), config)
+            .context("could not create the H.264 encoder")?;
         Ok(Self {
             inner,
             yuv: None,
@@ -51,7 +48,7 @@ impl VideoEncoder for H264Encoder {
         bgra: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Option<EncodedFrame>, CodecError> {
+    ) -> anyhow::Result<Option<EncodedFrame>> {
         let now_ms = self.started.elapsed().as_millis() as u64;
         self.encode_at(bgra, width, height, now_ms)
     }
@@ -69,14 +66,13 @@ impl H264Encoder {
         width: u32,
         height: u32,
         timestamp_ms: u64,
-    ) -> Result<Option<EncodedFrame>, CodecError> {
+    ) -> anyhow::Result<Option<EncodedFrame>> {
         let (w, h) = (width as usize, height as usize);
-        if w % 2 != 0 || h % 2 != 0 || bgra.len() < w * h * 4 {
-            return Err(CodecError::InvalidInput(format!(
-                "{width}x{height} with {} bytes",
-                bgra.len()
-            )));
-        }
+        ensure!(
+            w % 2 == 0 && h % 2 == 0 && bgra.len() >= w * h * 4,
+            "invalid frame: {width}x{height} with {} bytes",
+            bgra.len()
+        );
         let yuv = match &mut self.yuv {
             Some(buf) if buf.dimensions() == (w, h) => buf,
             slot => slot.insert(YUVBuffer::new(w, h)),
@@ -90,7 +86,7 @@ impl H264Encoder {
         }
 
         let ts = openh264::Timestamp::from_millis(timestamp_ms);
-        let bitstream = self.inner.encode_at(&*yuv, ts).map_err(codec_err)?;
+        let bitstream = self.inner.encode_at(&*yuv, ts).context("H.264 encoding")?;
         self.initialized = true;
 
         let keyframe = match bitstream.frame_type() {
@@ -114,16 +110,16 @@ pub struct H264Decoder {
 }
 
 impl H264Decoder {
-    pub fn new() -> Result<Self, CodecError> {
+    pub fn new() -> anyhow::Result<Self> {
         let inner = Decoder::with_api_config(OpenH264API::from_source(), DecoderConfig::new())
-            .map_err(codec_err)?;
+            .context("could not create the H.264 decoder")?;
         Ok(Self { inner })
     }
 }
 
 impl VideoDecoder for H264Decoder {
-    fn decode(&mut self, data: &[u8]) -> Result<Option<DecodedFrame>, CodecError> {
-        let Some(yuv) = self.inner.decode(data).map_err(codec_err)? else {
+    fn decode(&mut self, data: &[u8]) -> anyhow::Result<Option<DecodedFrame>> {
+        let Some(yuv) = self.inner.decode(data).context("H.264 decoding")? else {
             return Ok(None);
         };
         let (w, h) = yuv.dimensions();
