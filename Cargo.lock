@@ -3446,8 +3446,8 @@ dependencies = [
 name = "peeroxide-discovery"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "mdns-sd",
- "thiserror 2.0.20",
  "tracing",
 ]
 
