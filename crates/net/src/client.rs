@@ -21,18 +21,31 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SessionId(u64);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Why a viewer session ended. `Display` gives the sentence shown to the viewer.
+#[derive(Clone, Debug, PartialEq, Eq, strum::Display)]
 pub enum SessionEnd {
     /// Closed on our side (stopped watching or switched broadcaster).
+    #[strum(to_string = "Stopped watching")]
     Closed,
+    #[strum(to_string = "The broadcaster stopped sharing")]
     BroadcastStopped,
+    #[strum(to_string = "The shared window was closed")]
     SourceClosed,
+    #[strum(to_string = "The broadcaster has reached its viewer limit")]
     Busy,
+    #[strum(to_string = "The broadcaster runs an incompatible version")]
     VersionMismatch,
     /// The peer's certificate does not match the fingerprint it announced.
+    #[strum(
+        to_string = "Identity check failed: the peer's certificate does not match its \
+                     announcement (possible impersonation)"
+    )]
     IdentityMismatch,
+    #[strum(to_string = "Could not reach the broadcaster ({0})")]
     Unreachable(String),
+    #[strum(to_string = "Connection lost ({0})")]
     ConnectionLost(String),
+    #[strum(to_string = "Protocol error ({0})")]
     ProtocolError(String),
 }
 
@@ -364,5 +377,31 @@ async fn end_reason(conn: &Connection) -> SessionEnd {
         ConnectionError::LocallyClosed => SessionEnd::Closed,
         ConnectionError::TimedOut => SessionEnd::ConnectionLost("timed out".into()),
         other => SessionEnd::ConnectionLost(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_ends_read_as_sentences() {
+        assert_eq!(
+            SessionEnd::BroadcastStopped.to_string(),
+            "The broadcaster stopped sharing"
+        );
+        assert_eq!(
+            SessionEnd::IdentityMismatch.to_string(),
+            "Identity check failed: the peer's certificate does not match its announcement \
+             (possible impersonation)"
+        );
+        assert_eq!(
+            SessionEnd::Unreachable("192.168.0.9:5000: timed out".into()).to_string(),
+            "Could not reach the broadcaster (192.168.0.9:5000: timed out)"
+        );
+        assert_eq!(
+            SessionEnd::ProtocolError("closed with code 9".into()).to_string(),
+            "Protocol error (closed with code 9)"
+        );
     }
 }
