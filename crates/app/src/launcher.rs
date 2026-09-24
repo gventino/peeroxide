@@ -183,8 +183,8 @@ impl Launcher {
                 Phase::Main(Box::new(app))
             }
             Err(e) => {
-                tracing::error!("could not start: {e}");
-                Phase::Failed(e.to_string())
+                tracing::error!("could not start: {e:#}");
+                Phase::Failed(format!("{e:#}"))
             }
         };
     }

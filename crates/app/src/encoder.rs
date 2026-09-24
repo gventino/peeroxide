@@ -5,7 +5,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use peeroxide_capture::{CaptureOptions, CaptureStream, CloseReason, Next, Source};
+use anyhow::{Context, bail};
+use peeroxide_capture::{CaptureError, CaptureOptions, CaptureStream, CloseReason, Next, Source};
 use peeroxide_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
 use peeroxide_net::VideoFrame;
 
@@ -83,7 +84,7 @@ impl EncoderPipeline {
         preset: Preset,
         on_packet: impl FnMut(VideoFrame) + Send + 'static,
         on_end: impl FnOnce(EncoderEnd) + Send + 'static,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let stats = Arc::new(Mutex::new(EncoderStats::default()));
         let thread = std::thread::Builder::new()
             .name("encoder".into())
@@ -91,17 +92,18 @@ impl EncoderPipeline {
                 let control = control.clone();
                 let stats = stats.clone();
                 move || {
-                    let end = run(&control, &source, &preset, on_packet, &stats);
+                    let end = run(&control, &source, &preset, on_packet, &stats)
+                        .unwrap_or_else(|e| EncoderEnd::Failed(format!("{e:#}")));
                     tracing::info!(?end, source = %source.name, "encoder pipeline ended");
                     on_end(end);
                 }
             })
-            .expect("spawn encoder thread");
-        Self {
+            .context("could not start the encoder thread")?;
+        Ok(Self {
             control,
             stats,
             thread: Some(thread),
-        }
+        })
     }
 }
 
@@ -121,13 +123,14 @@ struct Session {
     encoder: H264Encoder,
 }
 
+/// Returns how the pipeline ended on its own; an error means it failed.
 fn run(
     control: &EncoderControl,
     source: &Source,
     preset: &Preset,
     mut on_packet: impl FnMut(VideoFrame),
     stats: &Mutex<EncoderStats>,
-) -> EncoderEnd {
+) -> anyhow::Result<EncoderEnd> {
     // Paced from when a frame is taken (not when encoding ends) so encode time doesn't accumulate
     // as drift; the slack absorbs jitter in the source's own cadence.
     let pace = Duration::from_secs_f64(1.0 / f64::from(preset.fps.max(1)))
@@ -138,7 +141,7 @@ fn run(
 
     loop {
         if control.stop.load(Ordering::Relaxed) {
-            return EncoderEnd::Stopped;
+            return Ok(EncoderEnd::Stopped);
         }
         if !control.active.load(Ordering::Relaxed) {
             if session.take().is_some() {
@@ -160,15 +163,10 @@ fn run(
                     },
                 ) {
                     Ok(c) => c,
-                    Err(peeroxide_capture::CaptureError::SourceNotFound) => {
-                        return EncoderEnd::SourceClosed;
-                    }
-                    Err(e) => return EncoderEnd::Failed(e.to_string()),
+                    Err(CaptureError::SourceNotFound) => return Ok(EncoderEnd::SourceClosed),
+                    Err(e) => return Err(e.into()),
                 };
-                let encoder = match H264Encoder::new(preset) {
-                    Ok(e) => e,
-                    Err(e) => return EncoderEnd::Failed(e.to_string()),
-                };
+                let encoder = H264Encoder::new(preset)?;
                 tracing::debug!("capture started");
                 session.insert(Session {
                     capture,
@@ -190,14 +188,12 @@ fn run(
                     stats.lock().unwrap().canvas = Some((w, h));
                     Canvas::new(w, h)
                 });
-                if let Err(e) = canvas.draw(&frame.data, frame.width, frame.height) {
-                    return EncoderEnd::Failed(e.to_string());
-                }
+                canvas.draw(&frame.data, frame.width, frame.height)?;
                 (frame.captured_at, true)
             }
             Next::Timeout => (Instant::now(), false),
-            Next::Closed(CloseReason::SourceClosed) => return EncoderEnd::SourceClosed,
-            Next::Closed(CloseReason::Failed(e)) => return EncoderEnd::Failed(e),
+            Next::Closed(CloseReason::SourceClosed) => return Ok(EncoderEnd::SourceClosed),
+            Next::Closed(CloseReason::Failed(e)) => bail!(e),
         };
 
         let want_keyframe = control.keyframe.swap(false, Ordering::Relaxed);
@@ -213,13 +209,9 @@ fn run(
         }
 
         let started = Instant::now();
-        let encoded = match s
+        let encoded = s
             .encoder
-            .encode(canvas.bgra(), canvas.width(), canvas.height())
-        {
-            Ok(e) => e,
-            Err(e) => return EncoderEnd::Failed(e.to_string()),
-        };
+            .encode(canvas.bgra(), canvas.width(), canvas.height())?;
         let Some(encoded) = encoded else { continue };
         stats
             .lock()

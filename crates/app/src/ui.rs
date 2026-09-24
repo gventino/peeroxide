@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use eframe::egui::{self, Color32, RichText};
 use peeroxide_capture::{Source, SourceKind, list_sources};
 use peeroxide_codec::Preset;
@@ -105,7 +106,7 @@ impl App {
             app.connect_input = connect.clone();
             match parse_connect(connect) {
                 Ok(target) => app.watch(target),
-                Err(e) => app.watch_note = Some(e),
+                Err(e) => app.watch_note = Some(e.to_string()),
             }
         }
         Ok(app)
@@ -135,7 +136,7 @@ impl App {
 
     fn save_settings(&self) {
         if let Err(e) = self.settings.save(&self.dir) {
-            tracing::warn!("could not save settings: {e}");
+            tracing::warn!("could not save settings: {e:#}");
         }
     }
 
@@ -211,7 +212,7 @@ impl App {
                 self.save_settings();
             }
             Ok(_) => {}
-            Err(e) => self.broadcast_note = Some(format!("Could not start broadcasting: {e}")),
+            Err(e) => self.broadcast_note = Some(format!("Could not start broadcasting: {e:#}")),
         }
     }
 
@@ -247,7 +248,7 @@ impl App {
         self.contacts
             .remember(&target.fingerprint, name, remote, &target.addrs, now);
         if let Err(e) = self.contacts.save(&self.dir) {
-            tracing::warn!("could not save contacts: {e}");
+            tracing::warn!("could not save contacts: {e:#}");
         }
     }
 
@@ -624,7 +625,7 @@ impl App {
         if let Some(fp) = removed {
             self.contacts.remove(&fp);
             if let Err(e) = self.contacts.save(&self.dir) {
-                tracing::warn!("could not save contacts: {e}");
+                tracing::warn!("could not save contacts: {e:#}");
             }
         }
         if let Some(target) = picked {
@@ -684,7 +685,7 @@ impl App {
             if ui.button("Watch").clicked() || submitted {
                 match parse_connect(&self.connect_input) {
                     Ok(target) => self.watch(target),
-                    Err(e) => self.watch_note = Some(e),
+                    Err(e) => self.watch_note = Some(e.to_string()),
                 }
             }
         });
@@ -816,14 +817,15 @@ impl eframe::App for App {
     }
 }
 
-pub fn parse_connect(s: &str) -> Result<PeerTarget, String> {
+/// The error's own text (without its cause) is short enough to show as a note.
+pub fn parse_connect(s: &str) -> anyhow::Result<PeerTarget> {
     let (addr, fp) = s
         .trim()
         .split_once('#')
-        .ok_or("Expected IP:PORT#FINGERPRINT")?;
-    let addr: SocketAddr = addr.trim().parse().map_err(|_| "Invalid IP:PORT")?;
+        .context("Expected IP:PORT#FINGERPRINT")?;
+    let addr: SocketAddr = addr.trim().parse().context("Invalid IP:PORT")?;
     let fingerprint = Fingerprint::from_hex(fp.trim())
-        .ok_or("Invalid fingerprint (expected 64 hex characters)")?;
+        .context("Invalid fingerprint (expected 64 hex characters)")?;
     Ok(PeerTarget {
         fingerprint,
         name: fingerprint.short(),

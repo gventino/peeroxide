@@ -50,7 +50,7 @@ impl AudioReceiver {
                     let mut decoder = match OpusDecoder::new() {
                         Ok(d) => d,
                         Err(e) => {
-                            tracing::error!("audio decoder init failed: {e}");
+                            tracing::error!("audio decoder init failed: {e:#}");
                             return;
                         }
                     };
@@ -67,7 +67,7 @@ impl AudioReceiver {
                                 let pcm = match decoder.decode(&packet.data) {
                                     Ok(pcm) => pcm,
                                     Err(e) => {
-                                        tracing::debug!(seq = packet.seq, "audio decode: {e}");
+                                        tracing::debug!(seq = packet.seq, "audio decode: {e:#}");
                                         stats.lock().unwrap().bad_packets += 1;
                                         continue;
                                     }
@@ -149,9 +149,9 @@ impl Player {
                     stats.lock().unwrap().output_error = None;
                 }
                 Err(e) => {
-                    tracing::warn!("audio output unavailable: {e}");
+                    tracing::warn!("audio output unavailable: {e:#}");
                     self.retry_at = Some(Instant::now() + REOPEN_AFTER);
-                    stats.lock().unwrap().output_error = Some(e.to_string());
+                    stats.lock().unwrap().output_error = Some(format!("{e:#}"));
                 }
             }
         }
