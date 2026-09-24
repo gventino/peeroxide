@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::{Context, bail};
 use quinn::{Connection, Endpoint, VarInt};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
@@ -11,7 +12,7 @@ use crate::protocol::{
     AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_msg, stream_kind,
     write_audio, write_frame, write_msg, write_stream_kind,
 };
-use crate::{Identity, NetError, tls};
+use crate::{Identity, tls};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Frames buffered per viewer before it is considered lagging and skipped ahead to a keyframe.
@@ -62,8 +63,9 @@ impl BroadcastServer {
         identity: &Identity,
         options: ServerOptions,
         on_keyframe_request: impl Fn() + Send + Sync + 'static,
-    ) -> Result<Self, NetError> {
-        let endpoint = Endpoint::server(tls::server_config(identity)?, options.bind)?;
+    ) -> anyhow::Result<Self> {
+        let endpoint = Endpoint::server(tls::server_config(identity)?, options.bind)
+            .with_context(|| format!("could not listen on {}", options.bind))?;
         let shared = Arc::new(Shared {
             name: options.name,
             max_viewers: options.max_viewers,
@@ -142,7 +144,7 @@ async fn accept_loop(endpoint: Endpoint, shared: Arc<Shared>) {
             let remote = conn.remote_address();
             match serve_viewer(&shared, &conn).await {
                 Ok(()) => tracing::info!(%remote, "viewer disconnected"),
-                Err(e) => tracing::info!(%remote, "viewer session ended: {e}"),
+                Err(e) => tracing::info!(%remote, "viewer session ended: {e:#}"),
             }
         });
     }
@@ -157,14 +159,14 @@ impl Drop for ViewerSlot {
     }
 }
 
-async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), String> {
+async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> anyhow::Result<()> {
     let (mut ctrl_send, mut ctrl_recv) = timeout(HANDSHAKE_TIMEOUT, conn.accept_bi())
         .await
-        .map_err(|_| "no control stream".to_string())?
-        .map_err(|e| e.to_string())?;
+        .context("no control stream")?
+        .context("control stream")?;
     let hello = timeout(HANDSHAKE_TIMEOUT, read_msg::<_, ClientMsg>(&mut ctrl_recv))
         .await
-        .map_err(|_| "no hello".to_string())?;
+        .context("no hello")?;
     let (version, viewer_name) = match hello {
         Ok(Some(ClientMsg::Hello {
             version,
@@ -172,12 +174,12 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
         })) => (version, sanitize(&viewer_name)),
         other => {
             conn.close(VarInt::from_u32(close::PROTOCOL_ERROR), b"expected hello");
-            return Err(format!("bad hello: {other:?}"));
+            bail!("bad hello: {other:?}");
         }
     };
     if version != PROTOCOL_VERSION {
         conn.close(VarInt::from_u32(close::VERSION_MISMATCH), b"version");
-        return Err(format!("{viewer_name} speaks protocol v{version}"));
+        bail!("{viewer_name} speaks protocol v{version}");
     }
     let admitted = shared.viewers.send_if_modified(|n| {
         let ok = *n < shared.max_viewers;
@@ -188,7 +190,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
     });
     if !admitted {
         conn.close(VarInt::from_u32(close::BUSY), b"too many viewers");
-        return Err(format!("{viewer_name} rejected: viewer limit reached"));
+        bail!("{viewer_name} rejected: viewer limit reached");
     }
     let _slot = ViewerSlot(shared.clone());
     tracing::info!(viewer = %viewer_name, remote = %conn.remote_address(), "viewer connected");
@@ -201,7 +203,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
         },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .context("sending welcome")?;
 
     // Control messages are read on their own task: stream reads are not cancellation-safe.
     let (left_tx, mut left) = oneshot::channel::<()>();
@@ -228,10 +230,10 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
         .audio
         .as_ref()
         .map(|audio| tokio::spawn(forward_audio(conn.clone(), audio.subscribe())));
-    let mut video = conn.open_uni().await.map_err(|e| e.to_string())?;
+    let mut video = conn.open_uni().await.context("opening the video stream")?;
     write_stream_kind(&mut video, stream_kind::VIDEO)
         .await
-        .map_err(|e| e.to_string())?;
+        .context("opening the video stream")?;
     let mut waiting_for_keyframe = true;
     let result = loop {
         tokio::select! {
@@ -244,7 +246,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
                         waiting_for_keyframe = false;
                     }
                     if let Err(e) = write_frame(&mut video, &frame).await {
-                        break Err(e.to_string());
+                        break Err(anyhow::Error::from(e).context("sending video"));
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -266,17 +268,15 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> Result<(), Str
 
 async fn forward_audio(conn: Connection, mut packets: broadcast::Receiver<AudioPacket>) {
     let opened = async {
-        let mut stream = conn.open_uni().await.map_err(|e| e.to_string())?;
+        let mut stream = conn.open_uni().await?;
         let _ = stream.set_priority(AUDIO_PRIORITY);
-        write_stream_kind(&mut stream, stream_kind::AUDIO)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok::<_, String>(stream)
+        write_stream_kind(&mut stream, stream_kind::AUDIO).await?;
+        anyhow::Ok(stream)
     };
     let mut stream = match opened.await {
         Ok(s) => s,
         Err(e) => {
-            tracing::debug!("could not open the audio stream: {e}");
+            tracing::debug!("could not open the audio stream: {e:#}");
             return;
         }
     };

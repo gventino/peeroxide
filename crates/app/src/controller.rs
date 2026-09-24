@@ -11,8 +11,8 @@ use peeroxide_capture::Source;
 use peeroxide_codec::Preset;
 use peeroxide_discovery::{Discovery, Peer};
 use peeroxide_net::{
-    BroadcastServer, Fingerprint, Identity, NetError, ServerOptions, SessionEvent, SessionHandle,
-    SessionId, StopReason, ViewerClient,
+    BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
+    StopReason, ViewerClient,
 };
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
@@ -32,7 +32,7 @@ fn start_server(
     preferred_port: Option<u16>,
     audio: bool,
     on_keyframe_request: impl Fn() + Send + Sync + Clone + 'static,
-) -> Result<BroadcastServer, NetError> {
+) -> anyhow::Result<BroadcastServer> {
     let options = |port| ServerOptions {
         name: name.to_owned(),
         max_viewers: MAX_VIEWERS,

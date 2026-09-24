@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use anyhow::Context;
 use quinn::{Connection, ConnectionError, Endpoint, RecvStream, VarInt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -12,7 +13,7 @@ use crate::protocol::{
     AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_audio, read_frame,
     read_msg, read_stream_kind, stream_kind, write_msg,
 };
-use crate::{Fingerprint, NetError, tls};
+use crate::{Fingerprint, tls};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -87,8 +88,9 @@ impl Drop for SessionHandle {
 }
 
 impl ViewerClient {
-    pub fn new() -> Result<Self, NetError> {
-        let endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
+    pub fn new() -> anyhow::Result<Self> {
+        let endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))
+            .context("could not open a UDP socket for watching")?;
         Ok(Self {
             endpoint,
             next_id: AtomicU64::new(1),
@@ -196,7 +198,7 @@ async fn connect_any(
     let mut last_error = "no usable address".to_string();
     for addr in addrs.iter().filter(|a| a.is_ipv4()) {
         let (config, mismatch) = tls::client_config(fingerprint)
-            .map_err(|e| SessionEnd::ProtocolError(e.to_string()))?;
+            .map_err(|e| SessionEnd::ProtocolError(format!("{e:#}")))?;
         let connecting = match endpoint.connect_with(config, *addr, "peeroxide.local") {
             Ok(c) => c,
             Err(e) => {
@@ -227,7 +229,7 @@ async fn session(
     mut keyframes: mpsc::UnboundedReceiver<()>,
 ) -> SessionEnd {
     let handshake = async {
-        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| e.to_string())?;
+        let (mut send, mut recv) = conn.open_bi().await?;
         write_msg(
             &mut send,
             &ClientMsg::Hello {
@@ -235,12 +237,9 @@ async fn session(
                 viewer_name,
             },
         )
-        .await
-        .map_err(|e| e.to_string())?;
-        let welcome = read_msg::<_, ServerMsg>(&mut recv)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok::<_, String>((send, welcome))
+        .await?;
+        let welcome = read_msg::<_, ServerMsg>(&mut recv).await?;
+        anyhow::Ok((send, welcome))
     };
     let mut send = match timeout(HANDSHAKE_TIMEOUT, handshake).await {
         Ok(Ok((
