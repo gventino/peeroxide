@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, ProgressBar, RichText};
 use peeroxide_net::Identity;
-use peeroxide_update::{Config, Outcome, RELEASES_API, Step, UpdateError, Version};
+use peeroxide_update::{Config, Outcome, Step, UpdateError, Version};
 
 use crate::Args;
 use crate::settings::Settings;
@@ -233,10 +233,7 @@ fn update_config(args: &Args) -> Option<Config> {
     if cfg!(debug_assertions) {
         return None;
     }
-    let disabled = args.no_update
-        || args.just_updated.is_some()
-        || std::env::var_os("PEEROXIDE_NO_UPDATE").is_some_and(|v| v != "0");
-    if disabled {
+    if args.no_update || args.just_updated.is_some() {
         return None;
     }
     let platform = peeroxide_update::PLATFORM?;
@@ -245,9 +242,8 @@ fn update_config(args: &Args) -> Option<Config> {
         return None;
     };
     let exe = std::env::current_exe().ok()?;
-    let api_url = std::env::var("PEEROXIDE_UPDATE_URL").unwrap_or_else(|_| RELEASES_API.into());
     Some(Config {
-        api_url,
+        api_url: args.update_url.clone(),
         current: Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver"),
         platform: platform.into(),
         public_key: public_key.into(),

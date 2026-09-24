@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
 use clap::Parser;
+use clap::builder::FalseyValueParser;
 use peeroxide_net::Identity;
+use peeroxide_update::RELEASES_API;
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about = "Peer-to-peer LAN screen sharing")]
@@ -33,7 +35,7 @@ pub struct Args {
     pub share_audio: bool,
 
     /// Watch the first discovered broadcaster whose name contains this text.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "connect")]
     pub watch: Option<String>,
 
     /// Watch a broadcaster directly, bypassing discovery: "IP:PORT#FINGERPRINT".
@@ -48,9 +50,14 @@ pub struct Args {
     #[arg(long)]
     pub name: Option<String>,
 
-    /// Don't check for updates at start (also: environment variable PEEROXIDE_NO_UPDATE=1).
-    #[arg(long)]
+    /// Don't check for updates at start. In the environment variable, 0, false, off and no
+    /// mean "check"; anything else turns the check off.
+    #[arg(long, env = "PEEROXIDE_NO_UPDATE", value_parser = FalseyValueParser::new())]
     pub no_update: bool,
+
+    /// Where to look for releases, e.g. a local test server (see docs/releasing.md).
+    #[arg(long, hide = true, env = "PEEROXIDE_UPDATE_URL", default_value = RELEASES_API)]
+    pub update_url: String,
 
     /// Set by the updater when it restarts the app: shows "Updated to VERSION" and skips the
     /// check once.
@@ -217,7 +224,33 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
+
+    #[test]
+    fn the_options_are_well_formed() {
+        Args::command().debug_assert();
+    }
+
+    #[test]
+    fn contradictory_options_are_refused() {
+        let parse = |list: &[&str]| Args::try_parse_from([&["peeroxide"], list].concat());
+        assert!(parse(&["--watch", "ana", "--connect", "127.0.0.1:1#ab"]).is_err());
+        assert!(parse(&["--share-audio"]).is_err());
+        assert!(parse(&["--broadcast", "test", "--share-audio"]).is_ok());
+        assert!(parse(&["--profile", "bad name"]).is_err());
+    }
+
+    #[test]
+    fn update_options_default_to_checking_github() {
+        let a = Args::try_parse_from(["peeroxide"]).unwrap();
+        assert!(!a.no_update);
+        assert_eq!(a.update_url, RELEASES_API);
+        let a =
+            Args::try_parse_from(["peeroxide", "--update-url", "http://127.0.0.1:1/r"]).unwrap();
+        assert_eq!(a.update_url, "http://127.0.0.1:1/r");
+    }
 
     fn old_layout(root: &Path) -> PathBuf {
         let old = root.join(OLD_APP_NAME).join("data");
