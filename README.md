@@ -40,7 +40,7 @@ Every time it opens, Peeroxide checks for a newer version, like Discord or Steam
 - **Same folder, same permissions.** The firewall permission you gave keeps working after an update.
 - **A folder it can't write to** (such as Program Files): a note offers the download page instead.
 - **Only Windows packages are published for now.** On macOS and Linux the app just opens.
-- **To turn it off:** start with `--no-update`, or set the environment variable `PEEROXIDE_NO_UPDATE=1`. Development builds (`cargo run`) never update themselves.
+- **To turn it off:** start with `--no-update`, or set the environment variable `PEEROXIDE_NO_UPDATE=1` (`0`, `false`, `off` or `no` leave the check on). Development builds (`cargo run`) never update themselves.
 - **Privacy:** the check tells GitHub your IP address and the app version, nothing else (AC-13).
 - The first version with the updater has to be installed by hand once; later ones arrive by themselves.
 
@@ -186,7 +186,7 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (121) cover:
+Automated tests (124) cover:
 - the wire protocol, including malformed and oversized input, for video and audio;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
@@ -202,9 +202,10 @@ Automated tests (121) cover:
   - restart options, and the notes shown after a failure;
 - saved contacts (merge, cap, corrupt files, ID-change detection), the sticky broadcast port, and audio settings defaults for older settings files;
 - the viewer state machine against the use-case diagram;
+- the command-line options: clap's own consistency check, contradictory options refused, and the update settings' defaults;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
 
-Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]` and `cargo run --release -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device).
+Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]` and `cargo run --release -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device). Each tool, like `release-sign` and `serve-release`, explains its options with `--help` (after `--` with `cargo run`).
 
 ### Manual checklist
 
