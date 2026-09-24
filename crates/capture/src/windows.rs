@@ -14,15 +14,13 @@ use windows_capture::window::Window;
 use crate::slot::FrameSlot;
 use crate::{CaptureError, CaptureOptions, CloseReason, Frame, Source, SourceKind, Target};
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
 struct Handler {
     slot: Arc<FrameSlot>,
 }
 
 impl GraphicsCaptureApiHandler for Handler {
     type Flags = Arc<FrameSlot>;
-    type Error = BoxError;
+    type Error = anyhow::Error;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
         Ok(Self { slot: ctx.flags })
@@ -62,7 +60,7 @@ impl GraphicsCaptureApiHandler for Handler {
 }
 
 struct Guard {
-    control: Option<CaptureControl<Handler, BoxError>>,
+    control: Option<CaptureControl<Handler, anyhow::Error>>,
 }
 
 impl Drop for Guard {

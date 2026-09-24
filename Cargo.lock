@@ -3426,6 +3426,7 @@ dependencies = [
 name = "peeroxide-capture"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "scap",
  "thiserror 2.0.20",
  "windows-capture 2.0.1",
