@@ -3,14 +3,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use quinn::{Connection, Endpoint, VarInt};
+use quinn::{Connection, Endpoint};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_msg, stream_kind,
-    write_audio, write_frame, write_msg, write_stream_kind,
+    AudioPacket, ClientMsg, CloseCode, PROTOCOL_VERSION, ServerMsg, StreamKind, VideoFrame,
+    read_msg, write_audio, write_frame, write_msg, write_stream_kind,
 };
 use crate::{Identity, tls};
 
@@ -107,11 +107,10 @@ impl BroadcastServer {
     pub async fn stop(&self, reason: StopReason) {
         self.accept_task.abort();
         let code = match reason {
-            StopReason::Stopped => close::BROADCAST_STOPPED,
-            StopReason::SourceClosed => close::SOURCE_CLOSED,
+            StopReason::Stopped => CloseCode::BroadcastStopped,
+            StopReason::SourceClosed => CloseCode::SourceClosed,
         };
-        self.endpoint
-            .close(VarInt::from_u32(code), b"broadcast ended");
+        self.endpoint.close(code.into(), b"broadcast ended");
         let _ = timeout(Duration::from_secs(1), self.endpoint.wait_idle()).await;
     }
 }
@@ -119,10 +118,8 @@ impl BroadcastServer {
 impl Drop for BroadcastServer {
     fn drop(&mut self) {
         self.accept_task.abort();
-        self.endpoint.close(
-            VarInt::from_u32(close::BROADCAST_STOPPED),
-            b"broadcast ended",
-        );
+        self.endpoint
+            .close(CloseCode::BroadcastStopped.into(), b"broadcast ended");
     }
 }
 
@@ -173,12 +170,12 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> anyhow::Result
             viewer_name,
         })) => (version, sanitize(&viewer_name)),
         other => {
-            conn.close(VarInt::from_u32(close::PROTOCOL_ERROR), b"expected hello");
+            conn.close(CloseCode::ProtocolError.into(), b"expected hello");
             bail!("bad hello: {other:?}");
         }
     };
     if version != PROTOCOL_VERSION {
-        conn.close(VarInt::from_u32(close::VERSION_MISMATCH), b"version");
+        conn.close(CloseCode::VersionMismatch.into(), b"version");
         bail!("{viewer_name} speaks protocol v{version}");
     }
     let admitted = shared.viewers.send_if_modified(|n| {
@@ -189,7 +186,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> anyhow::Result
         ok
     });
     if !admitted {
-        conn.close(VarInt::from_u32(close::BUSY), b"too many viewers");
+        conn.close(CloseCode::Busy.into(), b"too many viewers");
         bail!("{viewer_name} rejected: viewer limit reached");
     }
     let _slot = ViewerSlot(shared.clone());
@@ -214,7 +211,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> anyhow::Result
             match read_msg::<_, ClientMsg>(&mut ctrl_recv).await {
                 Ok(Some(ClientMsg::RequestKeyframe)) => on_keyframe(),
                 Ok(Some(ClientMsg::Hello { .. })) => {
-                    control_conn.close(VarInt::from_u32(close::PROTOCOL_ERROR), b"repeated hello");
+                    control_conn.close(CloseCode::ProtocolError.into(), b"repeated hello");
                     break;
                 }
                 Ok(None) | Err(_) => break,
@@ -231,7 +228,7 @@ async fn serve_viewer(shared: &Arc<Shared>, conn: &Connection) -> anyhow::Result
         .as_ref()
         .map(|audio| tokio::spawn(forward_audio(conn.clone(), audio.subscribe())));
     let mut video = conn.open_uni().await.context("opening the video stream")?;
-    write_stream_kind(&mut video, stream_kind::VIDEO)
+    write_stream_kind(&mut video, StreamKind::Video)
         .await
         .context("opening the video stream")?;
     let mut waiting_for_keyframe = true;
@@ -270,7 +267,7 @@ async fn forward_audio(conn: Connection, mut packets: broadcast::Receiver<AudioP
     let opened = async {
         let mut stream = conn.open_uni().await?;
         let _ = stream.set_priority(AUDIO_PRIORITY);
-        write_stream_kind(&mut stream, stream_kind::AUDIO).await?;
+        write_stream_kind(&mut stream, StreamKind::Audio).await?;
         anyhow::Ok(stream)
     };
     let mut stream = match opened.await {

@@ -4,12 +4,13 @@
 //!   Viewer sends `Hello`, broadcaster answers `Welcome` (which says whether audio is shared),
 //!   then the viewer may send `RequestKeyframe`.
 //! * Media (unidirectional streams opened by the broadcaster), each starting with one
-//!   [`stream_kind`] byte:
+//!   [`StreamKind`] byte:
 //!   * video: fixed 21-byte header + H.264 Annex-B, per frame;
 //!   * audio (only when shared): fixed 18-byte header + one Opus packet, per 20 ms.
-//! * Session end reasons travel as QUIC application close codes (see [`close`]).
+//! * Session end reasons travel as QUIC application close codes (see [`CloseCode`]).
 
 use bytes::Bytes;
+use quinn::VarInt;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -40,19 +41,31 @@ pub(crate) enum ServerMsg {
     },
 }
 
-/// First byte of every unidirectional stream.
-pub(crate) mod stream_kind {
-    pub const VIDEO: u8 = 0;
-    pub const AUDIO: u8 = 1;
+/// First byte of every unidirectional stream. The values are on the wire: never change them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::FromRepr)]
+#[repr(u8)]
+pub(crate) enum StreamKind {
+    Video = 0,
+    Audio = 1,
 }
 
-pub(crate) mod close {
-    pub const VIEWER_LEFT: u32 = 0;
-    pub const BROADCAST_STOPPED: u32 = 1;
-    pub const SOURCE_CLOSED: u32 = 2;
-    pub const BUSY: u32 = 3;
-    pub const VERSION_MISMATCH: u32 = 4;
-    pub const PROTOCOL_ERROR: u32 = 5;
+/// Why a session ended, sent as the QUIC application close code. The values are on the wire
+/// (older peers read them too): never change them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::FromRepr)]
+#[repr(u32)]
+pub(crate) enum CloseCode {
+    ViewerLeft = 0,
+    BroadcastStopped = 1,
+    SourceClosed = 2,
+    Busy = 3,
+    VersionMismatch = 4,
+    ProtocolError = 5,
+}
+
+impl From<CloseCode> for VarInt {
+    fn from(code: CloseCode) -> Self {
+        VarInt::from_u32(code as u32)
+    }
 }
 
 /// One encoded access unit as sent on the wire.
@@ -84,6 +97,8 @@ pub(crate) enum ProtocolError {
     TooLarge(usize),
     #[error("stream ended mid-message")]
     Truncated,
+    #[error("unknown stream kind {0}")]
+    UnknownStreamKind(u8),
 }
 
 pub(crate) async fn write_msg<W, T>(w: &mut W, msg: &T) -> Result<(), ProtocolError>
@@ -162,21 +177,26 @@ where
     }))
 }
 
-pub(crate) async fn write_stream_kind<W>(w: &mut W, kind: u8) -> Result<(), ProtocolError>
+pub(crate) async fn write_stream_kind<W>(w: &mut W, kind: StreamKind) -> Result<(), ProtocolError>
 where
     W: AsyncWrite + Unpin,
 {
-    w.write_all(&[kind]).await?;
+    w.write_all(&[kind as u8]).await?;
     Ok(())
 }
 
 /// `Ok(None)` if the stream ended before saying what it carries.
-pub(crate) async fn read_stream_kind<R>(r: &mut R) -> Result<Option<u8>, ProtocolError>
+pub(crate) async fn read_stream_kind<R>(r: &mut R) -> Result<Option<StreamKind>, ProtocolError>
 where
     R: AsyncRead + Unpin,
 {
     let mut kind = [0u8; 1];
-    Ok(read_exact_or_eof(r, &mut kind).await?.then_some(kind[0]))
+    if !read_exact_or_eof(r, &mut kind).await? {
+        return Ok(None);
+    }
+    StreamKind::from_repr(kind[0])
+        .map(Some)
+        .ok_or(ProtocolError::UnknownStreamKind(kind[0]))
 }
 
 pub(crate) async fn write_audio<W>(w: &mut W, p: &AudioPacket) -> Result<(), ProtocolError>
@@ -323,16 +343,51 @@ mod tests {
             capture_time_us: 987_654,
             data: Bytes::from(vec![0xFC; 300]),
         };
-        write_stream_kind(&mut a, stream_kind::AUDIO).await.unwrap();
+        write_stream_kind(&mut a, StreamKind::Audio).await.unwrap();
         write_audio(&mut a, &p).await.unwrap();
         drop(a);
         assert_eq!(
             read_stream_kind(&mut b).await.unwrap(),
-            Some(stream_kind::AUDIO)
+            Some(StreamKind::Audio)
         );
         assert_eq!(read_audio(&mut b).await.unwrap(), Some(p));
         assert_eq!(read_audio(&mut b).await.unwrap(), None);
         assert_eq!(read_stream_kind(&mut b).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn unknown_stream_kinds_are_rejected() {
+        let (mut a, mut b) = tokio::io::duplex(64);
+        a.write_all(&[42]).await.unwrap();
+        assert!(matches!(
+            read_stream_kind(&mut b).await,
+            Err(ProtocolError::UnknownStreamKind(42))
+        ));
+    }
+
+    /// Older peers read these numbers: changing one breaks compatibility without a version bump.
+    #[test]
+    fn wire_values_never_change() {
+        let kinds = [(StreamKind::Video, 0), (StreamKind::Audio, 1)];
+        for (kind, byte) in kinds {
+            assert_eq!(kind as u8, byte);
+            assert_eq!(StreamKind::from_repr(byte), Some(kind));
+        }
+        let codes = [
+            (CloseCode::ViewerLeft, 0),
+            (CloseCode::BroadcastStopped, 1),
+            (CloseCode::SourceClosed, 2),
+            (CloseCode::Busy, 3),
+            (CloseCode::VersionMismatch, 4),
+            (CloseCode::ProtocolError, 5),
+        ];
+        for (code, value) in codes {
+            assert_eq!(code as u32, value);
+            assert_eq!(CloseCode::from_repr(value), Some(code));
+            assert_eq!(VarInt::from(code).into_inner(), u64::from(value));
+        }
+        assert_eq!(StreamKind::from_repr(2), None);
+        assert_eq!(CloseCode::from_repr(6), None);
     }
 
     #[tokio::test]
