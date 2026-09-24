@@ -3416,6 +3416,7 @@ name = "peeroxide-audio"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "clap",
  "cpal",
  "rtrb",
  "tracing",
@@ -3427,6 +3428,7 @@ name = "peeroxide-capture"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "clap",
  "scap",
  "thiserror 2.0.20",
  "windows-capture 2.0.1",
@@ -3437,6 +3439,7 @@ name = "peeroxide-codec"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "clap",
  "fast_image_resize",
  "openh264",
  "opus-rs",

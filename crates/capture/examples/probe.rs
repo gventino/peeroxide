@@ -1,19 +1,32 @@
-//! Lists capture sources and measures the delivered frame rate of one of them.
-//! Usage: cargo run -p peeroxide-capture --example probe [source-index|title-substring] [seconds]
+//! Lists capture sources and measures the delivered frame rate of one of them. Run it with
+//! `--help` for the options.
 
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use clap::Parser;
 use peeroxide_capture::{CaptureOptions, Next, list_sources, start};
 
+/// Lists capture sources and measures the delivered frame rate of one of them.
+#[derive(Parser)]
+struct Cli {
+    /// The source to capture: its number in the list, or part of its title.
+    #[arg(default_value = "0")]
+    source: String,
+    /// How long to capture, in seconds.
+    #[arg(default_value_t = 3)]
+    seconds: u64,
+}
+
 fn main() -> anyhow::Result<()> {
+    let Cli {
+        source: which,
+        seconds: secs,
+    } = Cli::parse();
     let sources = list_sources().context("listing sources")?;
     for (i, s) in sources.iter().enumerate() {
         println!("[{i}] {:?} {}", s.kind, s.name);
     }
-    let mut args = std::env::args().skip(1);
-    let which = args.next().unwrap_or_else(|| "0".into());
-    let secs: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(3);
     let index = which
         .parse::<usize>()
         .ok()
