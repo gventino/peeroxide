@@ -136,7 +136,7 @@ Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.264 → R
 
 - The canvas size is fixed when capture starts, so resizing a shared window letterboxes instead of changing the stream resolution.
 - A viewer that falls behind skips ahead to the next keyframe instead of accumulating delay. Keyframes are produced on demand: when a viewer joins, lags, or reports a decode error.
-- Protocol (version 2): viewers open a control stream (`Hello` → `Welcome`, which says whether audio is shared, then `RequestKeyframe`). The broadcaster opens a video stream carrying `[seq, capture time, keyframe flag, length] + H.264 Annex-B` and, with audio, an audio stream carrying `[seq, capture time, length] + Opus`; each stream starts with a kind byte. Why a session ended (stopped, source closed, busy, version mismatch) travels as a QUIC application close code.
+- Protocol (version 2): viewers open a control stream (`Hello` → `Welcome`, which says whether audio is shared, then `RequestKeyframe`). The broadcaster opens a video stream carrying `[seq, capture time, keyframe flag, length] + H.264 Annex-B` and, with audio, an audio stream carrying `[seq, capture time, length] + Opus`; each stream starts with a kind byte. Why a session ended (stopped, source closed, busy, version mismatch) travels as a QUIC application close code. In the code, the close codes and stream kinds are enums decoded with strum's `FromRepr`; their numbers never change, because older peers read them.
 - Audio/video sync: both streams carry the broadcaster's capture time. The viewer compares `local time − capture time` for the video being shown and for arriving audio; the unknown clock difference cancels out. It then delays audio (never video) to match, on top of a jitter margin of at least 40 ms. Drift and gaps are absorbed with short skips or silences.
 - Audio never takes video down: if audio can't be captured, the broadcast goes out video-only with a note; a broken audio stream or missing output device only silences audio.
 - Errors: code that can fail returns `anyhow::Result`, with context saying what it was doing (which file, which socket), and errors are logged and shown with `{e:#}` so their causes aren't lost. Typed errors (`thiserror`) remain only where the caller acts on the kind of error: `UpdateError` (which note the updater shows), `CaptureError` (a source that's gone ends the broadcast as "closed", not as a failure) and the wire protocol's `ProtocolError`. The developer tools (`release-sign`, `serve-release`, `probe`, `bench`, `audio-probe`) print the whole cause chain and exit with code 1 when they fail.
@@ -186,8 +186,8 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (124) cover:
-- the wire protocol, including malformed and oversized input, for video and audio;
+Automated tests (127) cover:
+- the wire protocol, including malformed and oversized input, for video and audio, and the fixed values of close codes and stream kinds;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
 - audio over QUIC: in order next to video, absent when not shared, a lagging viewer skipping ahead, and broken or unexpected streams leaving the video running;
