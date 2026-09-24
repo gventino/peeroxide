@@ -1,92 +1,97 @@
-//! Creates the release signing key and signs release packages (see docs/releasing.md).
-//!
-//!   release-sign keygen [--force] [--no-password] [--secret-key PATH] [--public-key PATH]
-//!   release-sign sign <file> [--secret-key PATH] [--public-key PATH]
-//!
-//! The secret key defaults to %USERPROFILE%\.peeroxide\release.key (or $PEEROXIDE_RELEASE_KEY)
-//! and must never be committed. The public key defaults to crates/update/release-key.pub, which
-//! is compiled into the app. `--no-password` is for throwaway test keys only.
+//! Creates the release signing key and signs release packages (see docs/releasing.md). Run it
+//! with `--help` for the commands and options.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
+use clap::{Args, Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKey, SecretKeyBox};
 
 const PUBLIC_KEY: &str = "crates/update/release-key.pub";
 
+/// Creates the release signing key and signs release packages (see docs/releasing.md).
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Create the release signing key (asks for a password) and write its public key.
+    Keygen {
+        /// Replace an existing key. Every installed copy trusts the key it was built with, so
+        /// testers then have to install the next version by hand.
+        #[arg(long)]
+        force: bool,
+        /// Leave the secret key unencrypted. For throwaway test keys only.
+        #[arg(long)]
+        no_password: bool,
+        #[command(flatten)]
+        keys: Keys,
+    },
+    /// Sign a release package into FILE.minisig, then check the signature with the public key.
+    Sign {
+        /// The package, e.g. dist/peeroxide-X.Y.Z-windows-x64.zip.
+        file: PathBuf,
+        #[command(flatten)]
+        keys: Keys,
+    },
+}
+
+#[derive(Args)]
+struct Keys {
+    /// The secret key. Never commit it.
+    #[arg(
+        long,
+        value_name = "PATH",
+        env = "PEEROXIDE_RELEASE_KEY",
+        default_value_os_t = default_secret_key()
+    )]
+    secret_key: PathBuf,
+    /// The public key, which the app is built with.
+    #[arg(long, value_name = "PATH", default_value = PUBLIC_KEY)]
+    public_key: PathBuf,
+}
+
+/// `.peeroxide/release.key` in the user's home folder.
 fn default_secret_key() -> PathBuf {
-    if let Some(path) = std::env::var_os("PEEROXIDE_RELEASE_KEY") {
-        return path.into();
-    }
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .unwrap_or_else(|| ".".into());
     Path::new(&home).join(".peeroxide").join("release.key")
 }
 
-struct Options {
-    command: String,
-    file: Option<PathBuf>,
-    secret: PathBuf,
-    public: PathBuf,
-    force: bool,
-    no_password: bool,
-}
-
-fn parse() -> anyhow::Result<Options> {
-    let mut args = std::env::args().skip(1);
-    let command = args.next().context("expected `keygen` or `sign <file>`")?;
-    let mut o = Options {
-        command,
-        file: None,
-        secret: default_secret_key(),
-        public: PUBLIC_KEY.into(),
-        force: false,
-        no_password: false,
-    };
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--force" => o.force = true,
-            "--no-password" => o.no_password = true,
-            "--secret-key" => o.secret = args.next().context("--secret-key needs a path")?.into(),
-            "--public-key" => o.public = args.next().context("--public-key needs a path")?.into(),
-            other if o.file.is_none() && !other.starts_with("--") => o.file = Some(other.into()),
-            other => bail!("unexpected argument {other}"),
-        }
-    }
-    Ok(o)
-}
-
-fn keygen(o: &Options) -> anyhow::Result<()> {
+fn keygen(keys: &Keys, force: bool, no_password: bool) -> anyhow::Result<()> {
+    let (secret, public_path) = (&keys.secret_key, &keys.public_key);
     ensure!(
-        !o.secret.exists() || o.force,
+        !secret.exists() || force,
         "{} already exists. Every installed copy trusts the key it was built with, so a new key \
          means testers must install the next version by hand. Pass --force if that's what you \
          want.",
-        o.secret.display()
+        secret.display()
     );
-    let kp = if o.no_password {
+    let kp = if no_password {
         KeyPair::generate_unencrypted_keypair()
     } else {
         KeyPair::generate_encrypted_keypair(None)
     }
     .context("generating the key pair")?;
-    if let Some(dir) = o.secret.parent() {
+    if let Some(dir) = secret.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-    let secret = kp.sk.to_box(None)?.into_string();
-    std::fs::write(&o.secret, secret).with_context(|| format!("writing {}", o.secret.display()))?;
-    let public = kp.pk.to_box()?.into_string();
-    std::fs::write(&o.public, &public)
-        .with_context(|| format!("writing {}", o.public.display()))?;
+    std::fs::write(secret, kp.sk.to_box(None)?.into_string())
+        .with_context(|| format!("writing {}", secret.display()))?;
+    std::fs::write(public_path, kp.pk.to_box()?.into_string())
+        .with_context(|| format!("writing {}", public_path.display()))?;
     println!(
         "Secret key: {} (back it up somewhere safe; never commit it)",
-        o.secret.display()
+        secret.display()
     );
     println!(
         "Public key: {} (commit this; the app is built with it)",
-        o.public.display()
+        public_path.display()
     );
     Ok(())
 }
@@ -106,14 +111,13 @@ fn load_secret(path: &Path) -> anyhow::Result<SecretKey> {
     }
 }
 
-fn sign(o: &Options) -> anyhow::Result<()> {
-    let file = o.file.as_ref().context("sign needs a file")?;
+fn sign(file: &Path, keys: &Keys) -> anyhow::Result<()> {
     let name = file
         .file_name()
         .and_then(|n| n.to_str())
         .context("the file needs a plain name")?;
     let data = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-    let sk = load_secret(&o.secret)?;
+    let sk = load_secret(&keys.secret_key)?;
     let signature = minisign::sign(
         None,
         &sk,
@@ -129,20 +133,20 @@ fn sign(o: &Options) -> anyhow::Result<()> {
 
     // Same check the app makes, with the public key it is built with: catches a secret key that
     // doesn't match the committed public key before anyone downloads the release.
-    let public = std::fs::read_to_string(&o.public)
-        .with_context(|| format!("reading {}", o.public.display()))?;
+    let public = std::fs::read_to_string(&keys.public_key)
+        .with_context(|| format!("reading {}", keys.public_key.display()))?;
     PublicKeyBox::from_string(&public)
         .and_then(|b| b.into_public_key())
         .with_context(|| {
             format!(
                 "{} holds no public key; run `just release-keygen`",
-                o.public.display()
+                keys.public_key.display()
             )
         })?;
     peeroxide_update::verify_file(file, &signature, name, &public).with_context(|| {
         format!(
             "the signature doesn't verify with {}. Is the right key in use?",
-            o.public.display()
+            keys.public_key.display()
         )
     })?;
     println!("Signed {name} -> {}", sig_path.display());
@@ -150,10 +154,12 @@ fn sign(o: &Options) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let o = parse()?;
-    match o.command.as_str() {
-        "keygen" => keygen(&o),
-        "sign" => sign(&o),
-        other => bail!("unknown command {other}; expected keygen or sign"),
+    match Cli::parse().command {
+        Command::Keygen {
+            force,
+            no_password,
+            keys,
+        } => keygen(&keys, force, no_password),
+        Command::Sign { file, keys } => sign(&file, &keys),
     }
 }

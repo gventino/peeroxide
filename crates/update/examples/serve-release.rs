@@ -1,23 +1,28 @@
 //! Serves one signed release package the way GitHub would, on this computer, for testing the
-//! self-update without publishing anything (see docs/releasing.md).
-//!
-//!   serve-release <dist/peeroxide-X.Y.Z-windows-x64.zip> [port]
-//!
-//! Then start an older build with PEEROXIDE_UPDATE_URL set to the address it prints.
+//! self-update without publishing anything (see docs/releasing.md). Run it with `--help` for the
+//! options.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use clap::Parser;
+
+/// Serves one signed release package the way GitHub would, on this computer, to test the
+/// self-update without publishing anything. Then start an older build with
+/// PEEROXIDE_UPDATE_URL set to the address it prints (see docs/releasing.md).
+#[derive(Parser)]
+struct Cli {
+    /// The package, e.g. dist/peeroxide-X.Y.Z-windows-x64.zip; its .minisig must be next to it.
+    zip: PathBuf,
+    /// The port to serve on, on 127.0.0.1.
+    #[arg(default_value_t = 8765)]
+    port: u16,
+}
 
 fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
-    let zip = args
-        .next()
-        .map(PathBuf::from)
-        .context("usage: serve-release <peeroxide-X.Y.Z-windows-x64.zip> [port]")?;
-    let port: u16 = args.next().and_then(|p| p.parse().ok()).unwrap_or(8765);
+    let Cli { zip, port } = Cli::parse();
     let name = zip
         .file_name()
         .with_context(|| format!("{} is not a file", zip.display()))?
