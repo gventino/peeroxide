@@ -12,7 +12,7 @@ Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the 
 
 Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.7 (see the [roadmap](docs/roadmap.md)).
 
-Each release so far can't talk to the one before, so everyone needs to update together. 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
+0.5 and 0.4 work together (same protocol), and from 0.5 on the app updates itself, so a group stays on the same version. Earlier releases couldn't talk to the one before: 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
 
 Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md) · [releasing](docs/releasing.md)
 

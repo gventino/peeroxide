@@ -9,13 +9,16 @@ Requirements: Windows 10 version 2004 or newer, or Windows 11. No installation.
 Build: {commit}
 
 
-NEW: SOUND
+NEW IN 0.5
 ----------
-- You can now share the sound of what you broadcast (see SHARING YOUR
-  SCREEN). Viewers get a volume slider and a mute button.
-- This version can't see or connect to 0.3.0 or older, so everyone you
-  share with needs this version too. Mixing versions shows "incompatible
-  version".
+- Peeroxide now updates itself (see UPDATES). This is the last version you
+  install by hand: later ones arrive by themselves.
+- Fullscreen: while watching, press F11 or double-click the picture (see
+  WATCHING).
+- Much less CPU when you share a window, and a more responsive window for
+  viewers.
+- Works together with 0.4.0, but ask everyone to update. 0.3.0 or older
+  can't connect ("incompatible version").
 - Your ID, name, settings and saved people carry over.
 - If you unzip to a new folder, Windows Firewall asks again: tick both
   boxes again (see FIRST RUN).

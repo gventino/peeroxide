@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Peeroxide stands after **0.4.0 (pre-alpha)**, and what comes next. Audio, first planned as 0.6, shipped in 0.4.0, so the fixes and privacy milestones each moved up one number. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.5.0 (pre-alpha)**, and what comes next. Audio, first planned as 0.6, shipped in 0.4.0, so the fixes and privacy milestones each moved up one number. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
@@ -59,6 +59,8 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 ## 0.5 — Fixes and a better viewer
 
 Goal: a solid Windows build that is pleasant to watch, and that keeps itself up to date.
+
+**0.5.0 released** with the self-update, the Windows app details, fullscreen, and much lower CPU use when sharing a window (see Performance in the README). Everyone installs it by hand once. The rest of this milestone follows in later 0.5 releases, which arrive through the updater.
 
 - **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
 - **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
