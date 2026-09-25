@@ -4,14 +4,15 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use anyhow::Context;
 use eframe::egui;
 use peeroxide_audio::{AudioSource, OutputControl};
 use peeroxide_capture::Source;
 use peeroxide_codec::Preset;
 use peeroxide_discovery::{Discovery, Peer};
 use peeroxide_net::{
-    BroadcastServer, Fingerprint, Identity, NetError, ServerOptions, SessionEvent, SessionHandle,
-    SessionId, StopReason, ViewerClient,
+    BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
+    StopReason, ViewerClient,
 };
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
@@ -31,7 +32,7 @@ fn start_server(
     preferred_port: Option<u16>,
     audio: bool,
     on_keyframe_request: impl Fn() + Send + Sync + Clone + 'static,
-) -> Result<BroadcastServer, NetError> {
+) -> anyhow::Result<BroadcastServer> {
     let options = |port| ServerOptions {
         name: name.to_owned(),
         max_viewers: MAX_VIEWERS,
@@ -41,16 +42,16 @@ fn start_server(
     if let Some(port) = preferred_port.filter(|p| *p != 0) {
         match BroadcastServer::start(identity, options(port), on_keyframe_request.clone()) {
             Ok(server) => return Ok(server),
-            Err(e) => tracing::warn!("port {port} unavailable ({e}); using a random port"),
+            Err(e) => tracing::warn!("port {port} unavailable ({e:#}); using a random port"),
         }
     }
     BroadcastServer::start(identity, options(0), on_keyframe_request)
 }
 
 /// The audio to capture for `source`, if this machine can capture it.
-fn checked_audio_source(source: &Source) -> Result<AudioSource, String> {
-    let audio = audio_source(source).ok_or("could not tell which app owns this window")?;
-    peeroxide_audio::check(&audio).map_err(|e| e.to_string())?;
+fn checked_audio_source(source: &Source) -> anyhow::Result<AudioSource> {
+    let audio = audio_source(source).context("could not tell which app owns this window")?;
+    peeroxide_audio::check(&audio)?;
     Ok(audio)
 }
 
@@ -150,7 +151,8 @@ impl Controller {
             .worker_threads(2)
             .thread_name("net")
             .enable_all()
-            .build()?;
+            .build()
+            .context("could not start the network runtime")?;
         let client = {
             let _guard = rt.enter();
             ViewerClient::new()?
@@ -185,8 +187,8 @@ impl Controller {
         match started {
             Ok(d) => self.discovery = Some(d),
             Err(e) => {
-                tracing::warn!("discovery unavailable: {e}");
-                self.discovery_error = Some(format!("Discovery unavailable: {e}"));
+                tracing::warn!("discovery unavailable: {e:#}");
+                self.discovery_error = Some(format!("Discovery unavailable: {e:#}"));
             }
         }
     }
@@ -233,8 +235,8 @@ impl Controller {
             match checked_audio_source(&source) {
                 Ok(a) => (Some(a), None),
                 Err(e) => {
-                    tracing::warn!("audio unavailable: {e}");
-                    (None, Some(format!("Sharing video only: {e}")))
+                    tracing::warn!("audio unavailable: {e:#}");
+                    (None, Some(format!("Sharing video only: {e:#}")))
                 }
             }
         } else {
@@ -275,19 +277,21 @@ impl Controller {
             }
         });
 
-        let audio = audio_source.map(|audio_source| {
-            let emit = emit.clone();
-            AudioPipeline::start(
-                audio_control,
-                audio_source,
-                preset.audio_bitrate_bps,
-                {
-                    let server = server.clone();
-                    move |packet| server.publish_audio(packet)
-                },
-                move |error| emit(Event::AudioEnded { generation, error }),
-            )
-        });
+        let audio = audio_source
+            .map(|audio_source| {
+                let emit = emit.clone();
+                AudioPipeline::start(
+                    audio_control,
+                    audio_source,
+                    preset.audio_bitrate_bps,
+                    {
+                        let server = server.clone();
+                        move |packet| server.publish_audio(packet)
+                    },
+                    move |error| emit(Event::AudioEnded { generation, error }),
+                )
+            })
+            .transpose()?;
         let encoder = EncoderPipeline::start(
             control,
             source.clone(),
@@ -297,7 +301,7 @@ impl Controller {
                 move |frame| server.publish(frame)
             },
             move |end| emit(Event::BroadcastEnded { generation, end }),
-        );
+        )?;
 
         tracing::info!(
             source = %source.name,
@@ -313,7 +317,7 @@ impl Controller {
         if let Some(d) = &mut self.discovery
             && let Err(e) = d.announce(&self.display_name, port)
         {
-            tracing::warn!("could not announce on mDNS: {e}");
+            tracing::warn!("could not announce on mDNS: {e:#}");
         }
         self.broadcast = Some(Broadcast {
             generation,

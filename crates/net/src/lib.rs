@@ -17,13 +17,3 @@ pub use client::{SessionEnd, SessionEvent, SessionHandle, SessionId, ViewerClien
 pub use identity::{Fingerprint, Identity};
 pub use protocol::{AudioPacket, PROTOCOL_VERSION, VideoFrame};
 pub use server::{BroadcastServer, ServerOptions, StopReason};
-
-#[derive(Debug, thiserror::Error)]
-pub enum NetError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("TLS configuration error: {0}")]
-    Tls(#[from] rustls::Error),
-    #[error("{0}")]
-    Config(String),
-}

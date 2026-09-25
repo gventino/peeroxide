@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use peeroxide_audio::{AudioCapture, AudioChunk, AudioSource, Next, start_capture};
 use peeroxide_capture::{Source, SourceKind};
 use peeroxide_codec::opus::{CHANNELS, FRAME_LEN, SAMPLE_RATE};
@@ -60,7 +61,7 @@ impl AudioPipeline {
         bitrate_bps: u32,
         on_packet: impl FnMut(AudioPacket) + Send + 'static,
         on_end: impl FnOnce(String) + Send + 'static,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let stats = Arc::new(Mutex::new(AudioStats::default()));
         let thread = std::thread::Builder::new()
             .name("audio-encoder".into())
@@ -70,18 +71,18 @@ impl AudioPipeline {
                 move || match run(&control, &source, bitrate_bps, on_packet, &stats) {
                     Ok(()) => tracing::info!(?source, "audio pipeline ended"),
                     Err(e) => {
-                        tracing::warn!(?source, "audio pipeline failed: {e}");
-                        on_end(e);
+                        tracing::warn!(?source, "audio pipeline failed: {e:#}");
+                        on_end(format!("{e:#}"));
                     }
                 }
             })
-            .expect("spawn audio encoder thread");
-        Self {
+            .context("could not start the audio encoder thread")?;
+        Ok(Self {
             control,
             source,
             stats,
             thread: Some(thread),
-        }
+        })
     }
 }
 
@@ -106,7 +107,7 @@ fn run(
     bitrate_bps: u32,
     mut on_packet: impl FnMut(AudioPacket),
     stats: &Mutex<AudioStats>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let mut session: Option<Session> = None;
     let mut seq = 0u64;
     loop {
@@ -123,8 +124,8 @@ fn run(
         let s = match &mut session {
             Some(s) => s,
             None => {
-                let capture = start_capture(source).map_err(|e| e.to_string())?;
-                let encoder = OpusEncoder::new(bitrate_bps).map_err(|e| e.to_string())?;
+                let capture = start_capture(source)?;
+                let encoder = OpusEncoder::new(bitrate_bps)?;
                 tracing::debug!("audio capture started");
                 session.insert(Session {
                     capture,
@@ -141,7 +142,7 @@ fn run(
         }
         while let Some((pcm, captured_at)) = s.framer.pop() {
             let started = Instant::now();
-            let data = s.encoder.encode(&pcm).map_err(|e| e.to_string())?;
+            let data = s.encoder.encode(&pcm)?;
             stats
                 .lock()
                 .unwrap()

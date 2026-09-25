@@ -96,7 +96,7 @@ impl DecoderPipeline {
                     let mut decoder = match H264Decoder::new() {
                         Ok(d) => d,
                         Err(e) => {
-                            tracing::error!("decoder init failed: {e}");
+                            tracing::error!("decoder init failed: {e:#}");
                             return;
                         }
                     };
@@ -114,7 +114,7 @@ impl DecoderPipeline {
                             }
                             Ok(None) => {}
                             Err(e) => {
-                                tracing::warn!(seq = packet.seq, "decode error: {e}");
+                                tracing::warn!(seq = packet.seq, "decode error: {e:#}");
                                 resync.store(true, Ordering::Relaxed);
                                 stats.lock().unwrap().keyframe_requests += 1;
                                 need_keyframe();

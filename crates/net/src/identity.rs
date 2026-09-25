@@ -1,10 +1,9 @@
 use std::fmt;
 use std::path::Path;
 
+use anyhow::Context;
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
-
-use crate::NetError;
 
 const CERT_FILE: &str = "identity.cert.der";
 const KEY_FILE: &str = "identity.key.der";
@@ -70,26 +69,32 @@ impl Clone for Identity {
 }
 
 impl Identity {
-    pub fn generate() -> Result<Self, NetError> {
+    pub fn generate() -> anyhow::Result<Self> {
         let certified = rcgen::generate_simple_self_signed(vec!["peeroxide.local".to_string()])
-            .map_err(|e| NetError::Config(format!("certificate generation failed: {e}")))?;
+            .context("certificate generation failed")?;
         let cert = certified.cert.der().clone();
         let key = PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());
         Ok(Self::from_parts(cert, key))
     }
 
     /// Loads the identity stored in `dir`, creating and saving a new one on first run.
-    pub fn load_or_create(dir: &Path) -> Result<Self, NetError> {
+    pub fn load_or_create(dir: &Path) -> anyhow::Result<Self> {
         let (cert_path, key_path) = (dir.join(CERT_FILE), dir.join(KEY_FILE));
+        let read = |path: &Path| {
+            std::fs::read(path).with_context(|| format!("reading {}", path.display()))
+        };
+        let write = |path: &Path, bytes: &[u8]| {
+            std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+        };
         if cert_path.exists() && key_path.exists() {
-            let cert = CertificateDer::from(std::fs::read(&cert_path)?);
-            let key = PrivatePkcs8KeyDer::from(std::fs::read(&key_path)?);
+            let cert = CertificateDer::from(read(&cert_path)?);
+            let key = PrivatePkcs8KeyDer::from(read(&key_path)?);
             return Ok(Self::from_parts(cert, key));
         }
         let id = Self::generate()?;
-        std::fs::create_dir_all(dir)?;
-        std::fs::write(&key_path, id.key.secret_pkcs8_der())?;
-        std::fs::write(&cert_path, id.cert.as_ref())?;
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        write(&key_path, id.key.secret_pkcs8_der())?;
+        write(&cert_path, id.cert.as_ref())?;
         Ok(id)
     }
 

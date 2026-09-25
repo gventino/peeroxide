@@ -3,6 +3,7 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use peeroxide_capture::{CaptureOptions, Next, Source, list_sources, start};
 use peeroxide_codec::{
     Canvas, H264Decoder, H264Encoder, Preset, VideoDecoder, VideoEncoder, canvas_size,
@@ -21,7 +22,7 @@ impl Stage {
     }
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let which = args.next().unwrap_or_else(|| "0".into());
     let secs: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(5);
@@ -36,15 +37,22 @@ fn main() {
     let source = if which == "test" {
         Source::test_pattern()
     } else {
-        list_sources().unwrap()[which.parse::<usize>().unwrap()].clone()
+        let index: usize = which
+            .parse()
+            .with_context(|| format!("expected a source index, test or scroll, got {which}"))?;
+        list_sources()
+            .context("listing sources")?
+            .get(index)
+            .with_context(|| format!("no source {index}"))?
+            .clone()
     };
     println!("source: {} | preset: {}", source.name, preset.name);
 
-    let stream = start(&source, CaptureOptions::default()).unwrap();
+    let stream = start(&source, CaptureOptions::default()).context("starting the capture")?;
     let interval = Duration::from_secs_f64(1.0 / f64::from(preset.fps));
     let mut canvas: Option<Canvas> = None;
-    let mut enc = H264Encoder::new(&preset).unwrap();
-    let mut dec = H264Decoder::new().unwrap();
+    let mut enc = H264Encoder::new(&preset)?;
+    let mut dec = H264Decoder::new()?;
     let (mut t_canvas, mut t_enc, mut t_dec) =
         (Stage::default(), Stage::default(), Stage::default());
     let (mut bytes, mut keyframes) = (0usize, 0u32);
@@ -67,18 +75,18 @@ fn main() {
         });
 
         let t = Instant::now();
-        c.draw(&frame.data, frame.width, frame.height).unwrap();
+        c.draw(&frame.data, frame.width, frame.height)?;
         t_canvas.add(t.elapsed());
 
         let t = Instant::now();
-        let encoded = enc.encode(c.bgra(), c.width(), c.height()).unwrap();
+        let encoded = enc.encode(c.bgra(), c.width(), c.height())?;
         t_enc.add(t.elapsed());
 
         if let Some(e) = encoded {
             bytes += e.data.len();
             keyframes += u32::from(e.keyframe);
             let t = Instant::now();
-            dec.decode(&e.data).unwrap();
+            dec.decode(&e.data)?;
             t_dec.add(t.elapsed());
         }
 
@@ -90,10 +98,11 @@ fn main() {
     }
 
     report(started, &t_canvas, &t_enc, &t_dec, bytes, keyframes);
+    Ok(())
 }
 
 /// Worst case for screen sharing: a full-screen, high-detail page scrolling 6 px per frame.
-fn scroll_stress(secs: u64, preset: &Preset) {
+fn scroll_stress(secs: u64, preset: &Preset) -> anyhow::Result<()> {
     let (w, h) = (preset.max_width, preset.max_height);
     let page_h = h * 4;
     let mut seed = 0x2545_f491_u32;
@@ -117,8 +126,8 @@ fn scroll_stress(secs: u64, preset: &Preset) {
         }
     }
     println!("synthetic scrolling page {w}x{h}");
-    let mut enc = H264Encoder::new(preset).unwrap();
-    let mut dec = H264Decoder::new().unwrap();
+    let mut enc = H264Encoder::new(preset)?;
+    let mut dec = H264Decoder::new()?;
     let (mut t_enc, mut t_dec) = (Stage::default(), Stage::default());
     let (mut bytes, mut keyframes) = (0usize, 0u32);
     let started = Instant::now();
@@ -129,13 +138,13 @@ fn scroll_stress(secs: u64, preset: &Preset) {
         let off = ((n * 6) % (page_h - h)) as usize * w as usize * 4;
         let frame = &page[off..off + (w * h * 4) as usize];
         let t = Instant::now();
-        let e = enc.encode(frame, w, h).unwrap();
+        let e = enc.encode(frame, w, h)?;
         t_enc.add(t.elapsed());
         if let Some(e) = e {
             bytes += e.data.len();
             keyframes += u32::from(e.keyframe);
             let t = Instant::now();
-            dec.decode(&e.data).unwrap();
+            dec.decode(&e.data)?;
             t_dec.add(t.elapsed());
         }
         n += 1;
@@ -151,6 +160,7 @@ fn scroll_stress(secs: u64, preset: &Preset) {
         "delivered {delivered} of {n} frames ({:.1} fps after rate control)",
         f64::from(delivered) / started.elapsed().as_secs_f64()
     );
+    Ok(())
 }
 
 fn report(

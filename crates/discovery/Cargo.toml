@@ -6,8 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow = "1.0.104"
 mdns-sd = "0.21"
-thiserror = "2.0.20"
 tracing = "0.1.44"
 
 [lints]

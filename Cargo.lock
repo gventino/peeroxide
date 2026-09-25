@@ -3415,9 +3415,9 @@ dependencies = [
 name = "peeroxide-audio"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "cpal",
  "rtrb",
- "thiserror 2.0.20",
  "tracing",
  "wasapi",
 ]
@@ -3426,6 +3426,7 @@ dependencies = [
 name = "peeroxide-capture"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "scap",
  "thiserror 2.0.20",
  "windows-capture 2.0.1",
@@ -3435,19 +3436,19 @@ dependencies = [
 name = "peeroxide-codec"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "fast_image_resize",
  "openh264",
  "opus-rs",
  "peeroxide-capture",
- "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "peeroxide-discovery"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "mdns-sd",
- "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3455,6 +3456,7 @@ dependencies = [
 name = "peeroxide-net"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "postcard",
  "quinn",
@@ -3472,6 +3474,7 @@ dependencies = [
 name = "peeroxide-update"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "flate2",
  "minisign",
  "minisign-verify",

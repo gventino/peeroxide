@@ -1,7 +1,8 @@
+use anyhow::{Context, ensure};
 use fast_image_resize::images::{CroppedImageMut, Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 
-use crate::{CodecError, Preset};
+use crate::Preset;
 
 /// Output size for a source: fit inside the preset box, never upscale, even dimensions.
 pub fn canvas_size(src_w: u32, src_h: u32, preset: &Preset) -> (u32, u32) {
@@ -71,7 +72,7 @@ impl Canvas {
         self.image.buffer()
     }
 
-    pub fn draw(&mut self, bgra: &[u8], width: u32, height: u32) -> Result<(), CodecError> {
+    pub fn draw(&mut self, bgra: &[u8], width: u32, height: u32) -> anyhow::Result<()> {
         let (cw, ch) = (self.width(), self.height());
         let fit = fit_rect(width, height, cw, ch);
         if self.last_fit != Some(fit) {
@@ -81,9 +82,10 @@ impl Canvas {
 
         if fit.width == width && fit.height == height {
             let row = width as usize * 4;
-            if bgra.len() < row * height as usize {
-                return Err(CodecError::InvalidInput("buffer too small".into()));
-            }
+            ensure!(
+                bgra.len() >= row * height as usize,
+                "invalid frame: buffer too small"
+            );
             let canvas_row = cw as usize * 4;
             let dst = self.image.buffer_mut();
             for (y, src) in bgra.chunks_exact(row).take(height as usize).enumerate() {
@@ -93,14 +95,13 @@ impl Canvas {
             return Ok(());
         }
 
-        let src = ImageRef::new(width, height, bgra, PixelType::U8x4)
-            .map_err(|e| CodecError::InvalidInput(e.to_string()))?;
+        let src = ImageRef::new(width, height, bgra, PixelType::U8x4).context("invalid frame")?;
         let mut dst = CroppedImageMut::new(&mut self.image, fit.x, fit.y, fit.width, fit.height)
-            .map_err(|e| CodecError::InvalidInput(e.to_string()))?;
+            .context("invalid frame")?;
         let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
         self.resizer
             .resize(&src, &mut dst, &options)
-            .map_err(|e| CodecError::Codec(e.to_string()))
+            .context("scaling the frame")
     }
 }
 

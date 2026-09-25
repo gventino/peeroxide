@@ -16,6 +16,7 @@ mod viewer_state;
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, ensure};
 use clap::Parser;
 use peeroxide_net::Identity;
 
@@ -57,13 +58,13 @@ pub struct Args {
     pub just_updated: Option<String>,
 }
 
-fn parse_profile(s: &str) -> Result<String, String> {
+fn parse_profile(s: &str) -> anyhow::Result<String> {
     let ok = !s.is_empty()
         && s.len() <= 32
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    ok.then(|| s.to_string())
-        .ok_or_else(|| "use 1-32 letters, digits, '-' or '_'".into())
+    ensure!(ok, "use 1-32 letters, digits, '-' or '_'");
+    Ok(s.to_string())
 }
 
 const APP_NAME: &str = "Peeroxide";
@@ -84,12 +85,13 @@ pub fn data_dir(profile: Option<&str>) -> PathBuf {
 
 /// Moves the pre-rename data folder (identity, settings, contacts, logs) to `new`, once.
 /// Returns whether anything was migrated.
-fn migrate_data(old: &Path, new: &Path) -> std::io::Result<bool> {
+fn migrate_data(old: &Path, new: &Path) -> anyhow::Result<bool> {
     if new.exists() || !old.exists() {
         return Ok(false);
     }
     if let Some(parent) = new.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     if std::fs::rename(old, new).is_err() {
         // An old version still running keeps its log file open; copy everything else instead.
@@ -104,17 +106,19 @@ fn migrate_data(old: &Path, new: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-fn copy_except_logs(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
+fn copy_except_logs(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("creating {}", dst.display()))?;
+    let entries = std::fs::read_dir(src).with_context(|| format!("reading {}", src.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading {}", src.display()))?;
         let target = dst.join(entry.file_name());
         if entry.file_type()?.is_dir() {
             if entry.file_name() != "logs" {
                 copy_except_logs(&entry.path(), &target)?;
             }
         } else {
-            std::fs::copy(entry.path(), target)?;
+            std::fs::copy(entry.path(), &target)
+                .with_context(|| format!("copying {}", entry.path().display()))?;
         }
     }
     Ok(())
@@ -153,12 +157,12 @@ fn main() -> eframe::Result {
     match migrated {
         Ok(true) => tracing::info!("moved data from the {OLD_APP_NAME} folder"),
         Ok(false) => {}
-        Err(e) => tracing::warn!("could not migrate data from the {OLD_APP_NAME} folder: {e}"),
+        Err(e) => tracing::warn!("could not migrate data from the {OLD_APP_NAME} folder: {e:#}"),
     }
 
     let identity = Identity::load_or_create(&dir).unwrap_or_else(|e| {
         tracing::warn!(
-            "could not load identity from {}: {e}; using a temporary one",
+            "could not load identity from {}: {e:#}; using a temporary one",
             dir.display()
         );
         Identity::generate().expect("generate identity")

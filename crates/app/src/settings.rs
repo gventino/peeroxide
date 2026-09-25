@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use anyhow::Context;
 use peeroxide_codec::Preset;
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +30,11 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    pub fn save(&self, dir: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(dir)?;
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(dir.join(FILE), text)
+    pub fn save(&self, dir: &Path) -> anyhow::Result<()> {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        let text = toml::to_string_pretty(self).context("serializing the settings")?;
+        let path = dir.join(FILE);
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
     }
 
     /// Playback volume as 0.0–1.0.

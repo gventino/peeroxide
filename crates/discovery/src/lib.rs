@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
+use anyhow::{Context, ensure};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 pub const SERVICE_TYPE: &str = "_peeroxide._udp.local.";
@@ -23,14 +24,6 @@ pub struct Peer {
     pub addrs: Vec<SocketAddr>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum DiscoveryError {
-    #[error("mDNS error: {0}")]
-    Mdns(#[from] mdns_sd::Error),
-    #[error("invalid fingerprint")]
-    InvalidFingerprint,
-}
-
 pub struct Discovery {
     daemon: ServiceDaemon,
     own_fingerprint: String,
@@ -38,18 +31,18 @@ pub struct Discovery {
 }
 
 impl Discovery {
-    pub fn new(own_fingerprint: &str) -> Result<Self, DiscoveryError> {
+    pub fn new(own_fingerprint: &str) -> anyhow::Result<Self> {
         let own_fingerprint =
-            normalize_fingerprint(own_fingerprint).ok_or(DiscoveryError::InvalidFingerprint)?;
+            normalize_fingerprint(own_fingerprint).context("invalid fingerprint")?;
         Ok(Self {
-            daemon: ServiceDaemon::new()?,
+            daemon: ServiceDaemon::new().context("could not start mDNS")?,
             own_fingerprint,
             announced: None,
         })
     }
 
     /// Announces this peer as a broadcaster reachable on `port`, replacing any earlier announcement.
-    pub fn announce(&mut self, name: &str, port: u16) -> Result<(), DiscoveryError> {
+    pub fn announce(&mut self, name: &str, port: u16) -> anyhow::Result<()> {
         self.withdraw();
         // The fingerprint prefix makes instance names unique even when display names collide.
         let instance = &self.own_fingerprint[..16];
@@ -60,10 +53,13 @@ impl Discovery {
             ("name", name.as_str()),
             ("fp", self.own_fingerprint.as_str()),
         ];
-        let info = ServiceInfo::new(SERVICE_TYPE, instance, &host, "", port, &props[..])?
+        let info = ServiceInfo::new(SERVICE_TYPE, instance, &host, "", port, &props[..])
+            .context("invalid mDNS announcement")?
             .enable_addr_auto();
         let fullname = info.get_fullname().to_owned();
-        self.daemon.register(info)?;
+        self.daemon
+            .register(info)
+            .context("registering the mDNS service")?;
         tracing::info!(%fullname, port, "announced on mDNS");
         self.announced = Some(fullname);
         Ok(())
@@ -80,11 +76,8 @@ impl Discovery {
     }
 
     /// Watches the network; `on_update` receives the full, validated peer list on every change.
-    pub fn browse(
-        &self,
-        on_update: impl Fn(Vec<Peer>) + Send + 'static,
-    ) -> Result<(), DiscoveryError> {
-        let events = self.daemon.browse(SERVICE_TYPE)?;
+    pub fn browse(&self, on_update: impl Fn(Vec<Peer>) + Send + 'static) -> anyhow::Result<()> {
+        let events = self.daemon.browse(SERVICE_TYPE).context("browsing mDNS")?;
         let mut table = PeerTable::new(self.own_fingerprint.clone());
         std::thread::Builder::new()
             .name("discovery".into())
@@ -103,7 +96,7 @@ impl Discovery {
                             match peer {
                                 Ok(peer) => table.upsert(&s.fullname, peer),
                                 Err(why) => {
-                                    tracing::debug!(fullname = %s.fullname, why, "ignored announcement");
+                                    tracing::debug!(fullname = %s.fullname, %why, "ignored announcement");
                                     table.remove(&s.fullname)
                                 }
                             }
@@ -116,7 +109,7 @@ impl Discovery {
                     }
                 }
             })
-            .map_err(|e| DiscoveryError::Mdns(mdns_sd::Error::Msg(e.to_string())))?;
+            .context("could not start the discovery thread")?;
         Ok(())
     }
 }
@@ -180,16 +173,12 @@ fn validate(
     fingerprint: Option<&str>,
     ips: impl IntoIterator<Item = IpAddr>,
     port: u16,
-) -> Result<Peer, &'static str> {
-    if version != Some(TXT_VERSION) {
-        return Err("unsupported version");
-    }
+) -> anyhow::Result<Peer> {
+    ensure!(version == Some(TXT_VERSION), "unsupported version");
     let fingerprint = fingerprint
         .and_then(normalize_fingerprint)
-        .ok_or("invalid fingerprint")?;
-    if port == 0 {
-        return Err("invalid port");
-    }
+        .context("invalid fingerprint")?;
+    ensure!(port != 0, "invalid port");
     let mut v4: Vec<Ipv4Addr> = ips
         .into_iter()
         .filter_map(|ip| match ip {
@@ -201,9 +190,7 @@ fn validate(
         .collect();
     v4.sort_by_key(|a| (reachability_rank(a), *a));
     v4.dedup();
-    if v4.is_empty() {
-        return Err("no IPv4 address");
-    }
+    ensure!(!v4.is_empty(), "no IPv4 address");
     Ok(Peer {
         fingerprint,
         name: sanitize_name(name.unwrap_or_default()),
