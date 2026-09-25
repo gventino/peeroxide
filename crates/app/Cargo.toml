@@ -20,6 +20,7 @@ peeroxide-codec = { path = "../codec" }
 peeroxide-discovery = { path = "../discovery" }
 peeroxide-net = { path = "../net" }
 peeroxide-update = { path = "../update" }
+rayon = "1.12"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 toml = "1.1.6"

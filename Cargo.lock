@@ -3401,6 +3401,7 @@ dependencies = [
  "peeroxide-discovery",
  "peeroxide-net",
  "peeroxide-update",
+ "rayon",
  "serde",
  "tempfile",
  "tokio",
