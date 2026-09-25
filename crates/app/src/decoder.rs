@@ -1,4 +1,4 @@
-//! Viewer side: H.264 packets → RGBA frames in a [`VideoSlot`] for the GUI.
+//! Viewer side: H.264 packets → images in a [`VideoSlot`] for the GUI.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use eframe::egui::ColorImage;
 use peeroxide_codec::{DecodedFrame, H264Decoder, VideoDecoder};
 
 use crate::stats::Meter;
@@ -13,18 +14,24 @@ use peeroxide_net::VideoFrame;
 
 const QUEUE: usize = 8;
 
-/// Newest decoded frame, taken by the GUI on its next repaint.
+/// Newest decoded frame, ready to upload, taken by the GUI on its next repaint.
 #[derive(Default)]
-pub struct VideoSlot(Mutex<Option<DecodedFrame>>);
+pub struct VideoSlot(Mutex<Option<ColorImage>>);
 
 impl VideoSlot {
-    pub fn put(&self, frame: DecodedFrame) {
-        *self.0.lock().unwrap() = Some(frame);
+    pub fn put(&self, image: ColorImage) {
+        *self.0.lock().unwrap() = Some(image);
     }
 
-    pub fn take(&self) -> Option<DecodedFrame> {
+    pub fn take(&self) -> Option<ColorImage> {
         self.0.lock().unwrap().take()
     }
+}
+
+/// Built on the decoder thread: at 1080p this copy takes about 2 ms, which the UI thread would
+/// otherwise spend on every frame.
+fn to_image(frame: &DecodedFrame) -> ColorImage {
+    ColorImage::from_rgba_premultiplied([frame.width as usize, frame.height as usize], &frame.rgba)
 }
 
 #[derive(Default)]
@@ -104,12 +111,13 @@ impl DecoderPipeline {
                         let started = Instant::now();
                         match decoder.decode(&packet.data) {
                             Ok(Some(frame)) => {
+                                let image = to_image(&frame);
                                 let mut s = stats.lock().unwrap();
                                 s.meter.record(packet.data.len(), started.elapsed());
                                 s.latency_ms = latency_ms(packet.capture_time_us);
                                 drop(s);
                                 video_offset.record(packet.capture_time_us);
-                                output.put(frame);
+                                output.put(image);
                                 on_frame();
                             }
                             Ok(None) => {}

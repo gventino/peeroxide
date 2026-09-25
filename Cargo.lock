@@ -1136,6 +1136,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "crossbeam"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e71406cd8807725f7ac2f999a4cdd32e98f829fdf65f528343cebf945e41df1e"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1159,6 +1172,15 @@ name = "crossbeam-epoch"
 version = "0.9.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03e8bd762f7479489c70ed6c768ddca99d7296857de437a68dcb2a94365b3fae"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -3391,6 +3413,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
+ "crossbeam",
  "directories",
  "eframe",
  "gethostname",
@@ -3401,6 +3424,7 @@ dependencies = [
  "peeroxide-discovery",
  "peeroxide-net",
  "peeroxide-update",
+ "rayon",
  "serde",
  "tempfile",
  "tokio",
@@ -3418,6 +3442,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cpal",
+ "crossbeam",
  "rtrb",
  "tracing",
  "wasapi",
@@ -3429,6 +3454,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "rayon",
  "scap",
  "thiserror 2.0.20",
  "windows-capture 2.0.1",

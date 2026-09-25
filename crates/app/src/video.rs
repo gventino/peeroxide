@@ -1,6 +1,5 @@
 use eframe::egui::{
-    self, Align2, Color32, ColorImage, FontId, Rect, Sense, TextureHandle, TextureOptions, pos2,
-    vec2,
+    self, Align2, Color32, FontId, Rect, Sense, TextureHandle, TextureOptions, pos2, vec2,
 };
 
 use crate::decoder::VideoSlot;
@@ -17,11 +16,8 @@ impl VideoView {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, slot: &VideoSlot, overlay: &str) {
-        if let Some(frame) = slot.take() {
-            let image = ColorImage::from_rgba_premultiplied(
-                [frame.width as usize, frame.height as usize],
-                &frame.rgba,
-            );
+        // The decoder thread already built the image: only the upload happens here.
+        if let Some(image) = slot.take() {
             match &mut self.texture {
                 Some(t) => t.set(image, TextureOptions::LINEAR),
                 None => {

@@ -2,7 +2,7 @@
 //!
 //! Runs on its own thread; any failure here (bad packet, no output device) only affects audio.
 
-use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -60,34 +60,29 @@ impl AudioReceiver {
                         retry_at: None,
                         playout: Playout::default(),
                     };
-                    loop {
-                        match rx.recv_timeout(Duration::from_millis(250)) {
-                            Ok((packet, arrival_us)) => {
-                                let started = Instant::now();
-                                let pcm = match decoder.decode(&packet.data) {
-                                    Ok(pcm) => pcm,
-                                    Err(e) => {
-                                        tracing::debug!(seq = packet.seq, "audio decode: {e:#}");
-                                        stats.lock().unwrap().bad_packets += 1;
-                                        continue;
-                                    }
-                                };
-                                stats
-                                    .lock()
-                                    .unwrap()
-                                    .meter
-                                    .record(packet.data.len(), started.elapsed());
-                                player.play(
-                                    &pcm,
-                                    packet.capture_time_us,
-                                    arrival_us,
-                                    video_offset.get(),
-                                    &stats,
-                                );
+                    // Ends when the AudioReceiver drops its sender, after the queued packets.
+                    for (packet, arrival_us) in rx {
+                        let started = Instant::now();
+                        let pcm = match decoder.decode(&packet.data) {
+                            Ok(pcm) => pcm,
+                            Err(e) => {
+                                tracing::debug!(seq = packet.seq, "audio decode: {e:#}");
+                                stats.lock().unwrap().bad_packets += 1;
+                                continue;
                             }
-                            Err(RecvTimeoutError::Timeout) => {}
-                            Err(RecvTimeoutError::Disconnected) => break,
-                        }
+                        };
+                        stats
+                            .lock()
+                            .unwrap()
+                            .meter
+                            .record(packet.data.len(), started.elapsed());
+                        player.play(
+                            &pcm,
+                            packet.capture_time_us,
+                            arrival_us,
+                            video_offset.get(),
+                            &stats,
+                        );
                     }
                 }
             })

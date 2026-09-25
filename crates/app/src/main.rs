@@ -153,6 +153,28 @@ fn init_logging(dir: &std::path::Path) -> tracing_appender::non_blocking::Worker
     guard
 }
 
+/// rayon's pool only runs short per-frame jobs: windows-capture's copy of each padded frame on
+/// Windows, and the pixel conversion on macOS/Linux. Its default size (one thread per core)
+/// spins far more CPU than it saves on jobs that short. Sharing a window used 70-100% of a core
+/// with the default pool, and 30-37% with one thread, at the same frame rate. `RAYON_NUM_THREADS`
+/// still overrides the choice.
+fn size_rayon_pool() {
+    let threads = if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        0 // let rayon read it
+    } else if cfg!(windows) {
+        1
+    } else {
+        2
+    };
+    let built = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("rayon-{i}"))
+        .build_global();
+    if let Err(e) = built {
+        tracing::warn!("could not size the rayon pool: {e}");
+    }
+}
+
 fn main() -> eframe::Result {
     let args = Args::parse();
     let migrated = match (app_data_root(OLD_APP_NAME), app_data_root(APP_NAME)) {
@@ -161,6 +183,7 @@ fn main() -> eframe::Result {
     };
     let dir = data_dir(args.profile.as_deref());
     let _log_guard = init_logging(&dir);
+    size_rayon_pool();
     match migrated {
         Ok(true) => tracing::info!("moved data from the {OLD_APP_NAME} folder"),
         Ok(false) => {}

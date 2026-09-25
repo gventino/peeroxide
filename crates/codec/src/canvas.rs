@@ -160,4 +160,39 @@ mod tests {
         assert_eq!(canvas.bgra()[0], 0);
         assert_eq!(canvas.bgra()[(8 * 16 + 8) * 4], 200);
     }
+
+    /// Average time to draw a 1080p frame onto a `width`x`height` canvas, paced at 30 fps like
+    /// a broadcast: rayon's workers behave differently in a tight loop.
+    fn paced_draw_ms(width: u32, height: u32) -> f64 {
+        use std::time::{Duration, Instant};
+        const FRAMES: u32 = 90;
+        let frame: Vec<u8> = (0..1920 * 1080 * 4).map(|i| (i % 251) as u8).collect();
+        let mut canvas = Canvas::new(width, height);
+        let mut busy = Duration::ZERO;
+        for _ in 0..FRAMES {
+            let started = Instant::now();
+            canvas.draw(&frame, 1920, 1080).unwrap();
+            busy += started.elapsed();
+            std::thread::sleep(Duration::from_millis(33));
+        }
+        busy.as_secs_f64() * 1000.0 / f64::from(FRAMES)
+    }
+
+    #[test]
+    #[ignore = "timing; run with --release --ignored --nocapture"]
+    fn downscale_speed() {
+        println!(
+            "1920x1080 -> 1280x720: {:.2} ms per frame",
+            paced_draw_ms(1280, 720)
+        );
+    }
+
+    #[test]
+    #[ignore = "timing; run with --release --ignored --nocapture"]
+    fn copy_speed() {
+        println!(
+            "1920x1080 copy: {:.2} ms per frame",
+            paced_draw_ms(1920, 1080)
+        );
+    }
 }
