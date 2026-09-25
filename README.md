@@ -24,6 +24,7 @@ Design documents: [functional requirements](docs/functional-requirements.md) · 
    - **Share audio** (off by default, remembered) adds sound to the broadcast. It says exactly what it captures: for a window, only that app's sound; for a monitor, all sound on the computer except Peeroxide itself (so broadcasting while watching someone never feeds their stream back). The microphone is never captured. The choice is fixed for the broadcast; stop and start again to change it.
 2. **Watch:** broadcasters on your network appear under **Broadcasting on this network**. Click one to watch it; click another to switch. You only ever watch one stream at a time.
    - If the broadcaster shares audio, a 🔊 mute button and a volume slider appear under the stream's name. They only affect what you hear, and are remembered. Audio plays in sync with the video.
+   - **Fullscreen:** press F11, double-click the video, or click **⛶ Fullscreen**. Only the stream is shown. Move the mouse for a bar with the name, mute, volume and an exit button; it hides again, with the cursor, after 2 seconds. Esc, F11 or a double-click go back, and fullscreen ends by itself when the stream ends.
 3. **Saved:** everyone you have watched is remembered (★). When they aren't showing up in the list, e.g. discovery doesn't reach them, they appear under **Saved**. Click to connect at their last address, or 🗑 to forget them.
 4. **Check who you are watching:** every peer has an ID such as `7268-E22A`, shown next to its name. It is derived from that peer's certificate, and the connection is refused if the broadcaster can't prove it owns that ID.
    - If two broadcasters share a name, a ⚠ appears; ask the person you expect for their ID (shown in the top bar of their app).
@@ -189,7 +190,7 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (130) cover:
+Automated tests (133) cover:
 - the wire protocol, including malformed and oversized input, for video and audio, and the fixed values of close codes and stream kinds;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
@@ -205,7 +206,7 @@ Automated tests (130) cover:
   - behaviour: size caps, skip, rate limits, a silent server (5 s), a second instance, insecure URLs;
   - restart options, and the notes shown after a failure;
 - saved contacts (merge, cap, corrupt files, ID-change detection), the sticky broadcast port, and audio settings defaults for older settings files;
-- the viewer state machine against the use-case diagram;
+- the viewer state machine against the use-case diagram, and the fullscreen rules (when to enter and leave, when the controls show);
 - the command-line options: clap's own consistency check, contradictory options refused, and the update settings' defaults;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
 

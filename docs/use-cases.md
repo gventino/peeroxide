@@ -25,6 +25,7 @@ flowchart LR
     UC7["UC-07<br/>Broadcast With or Without Audio"]
     UC8["UC-08<br/>Adjust Stream Volume"]
     UC9["UC-09<br/>Update on Start"]
+    UC10["UC-10<br/>Watch in Fullscreen"]
     User(["Any user"])
 
     Broadcaster --> UC2
@@ -35,6 +36,7 @@ flowchart LR
     Viewer --> UC4
     Viewer --> UC6
     Viewer --> UC8
+    Viewer --> UC10
     User --> UC9
 
     UC3 -.includes.-> UC1
@@ -42,6 +44,7 @@ flowchart LR
     UC6 -.extends.-> UC3
     UC7 -.extends.-> UC2
     UC8 -.extends.-> UC3
+    UC10 -.extends.-> UC3
 ```
 
 ## UC-01 — Discover Broadcasters
@@ -245,3 +248,17 @@ stateDiagram-v2
     Restarting --> [*]: new version starts ("Updated to X")
     Open --> [*]
 ```
+
+## UC-10 — Watch in Fullscreen
+
+- **Actor:** Viewer
+- **Preconditions:** The viewer is watching a broadcaster (UC-03).
+- **Main flow:**
+  1. The viewer presses F11, double-clicks the video, or clicks "Fullscreen".
+  2. The stream fills the screen on its own: no side panel, no statistics.
+  3. When the viewer moves the mouse, a bar shows the broadcaster's name, the volume controls (UC-08) and an exit button. After about 2 seconds without movement it hides again, with the cursor. It also shows for the first 3 seconds, so a viewer who pressed F11 sees how to leave.
+  4. The viewer presses Esc or F11, double-clicks the video, or clicks the exit button, and the normal window returns.
+- **Postconditions:** The stream plays throughout. Entering or leaving fullscreen changes nothing for the broadcaster or for the session.
+- **Exceptions:**
+  - If the stream ends while in fullscreen (UC-06), the app leaves fullscreen by itself, so the viewer sees why.
+  - A viewer who is also broadcasting keeps broadcasting; the broadcast controls are just out of sight until they leave fullscreen.
