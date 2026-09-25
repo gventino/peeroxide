@@ -54,6 +54,7 @@ Each broadcaster streams independently to whichever viewers are currently connec
 | FR-15 | Broadcast Without Audio | Sharing audio shall be optional and off by default. The broadcaster chooses before starting a broadcast, the choice is remembered, and viewers are told when a broadcast has no audio. | Medium |
 | FR-16 | Viewer Volume Control | A viewer shall be able to change the playback volume of the stream (0–100%) and mute it. The setting only affects that viewer and is remembered across sessions. | Medium |
 | FR-17 | Automatic Updates | Every time it starts, the application shall check for a newer released version and, if one exists, download, verify, install it and restart, with visible progress and an option to skip. Without a newer version, or on any failure, it opens normally on the current version. | High |
+| FR-18 | Fullscreen Viewing | A viewer shall be able to show the watched stream alone, filling the screen, and leave that view at any time with the keyboard or the mouse. The volume controls stay reachable in fullscreen, and fullscreen ends when the stream ends. | Medium |
 
 ## Traceability Notes
 

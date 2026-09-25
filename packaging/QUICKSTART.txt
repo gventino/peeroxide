@@ -77,6 +77,8 @@ WATCHING
 - If they share sound, a speaker button (mute) and a volume slider appear
   under "Watching ...". They only change what you hear, and are remembered.
   Otherwise it says "The broadcaster isn't sharing audio".
+- Fullscreen: press F11, double-click the picture, or click "Fullscreen".
+  Move the mouse to show the volume and an exit button; Esc leaves.
 - Next to each name there is an ID like 7268-E22A. The broadcaster sees
   their own ID at the top of their window. If they match, you are watching
   the right person (the app refuses to connect if the ID is faked).

@@ -37,13 +37,13 @@ pub(crate) fn to_bgra(width: u32, height: u32, data: &[u8], layout: Layout) -> O
     out.par_chunks_exact_mut(w * 4)
         .zip(data.par_chunks(stride))
         .for_each(|(dst, src)| {
-            for (px, bgra) in src[..row].chunks_exact(bpp).zip(dst.chunks_exact_mut(4)) {
+            for (px, bgra) in src[..row].chunks_exact(bpp).zip(dst.as_chunks_mut::<4>().0) {
                 let (r, g, b) = match layout {
                     Layout::Bgrx => (px[2], px[1], px[0]),
                     Layout::Rgbx | Layout::Rgb => (px[0], px[1], px[2]),
                     Layout::Xbgr => (px[3], px[2], px[1]),
                 };
-                bgra.copy_from_slice(&[b, g, r, 255]);
+                *bgra = [b, g, r, 255];
             }
         });
     Some(out)

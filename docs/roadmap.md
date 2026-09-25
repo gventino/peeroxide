@@ -63,7 +63,7 @@ Goal: a solid Windows build that is pleasant to watch, and that keeps itself up 
 - **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
 - **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
 - All known bugs above fixed, and CI green on Windows.
-- **Fullscreen viewer**: double-click or F11 to toggle, Esc to leave.
+- **Fullscreen viewer · built.** F11, a double-click on the video or the Fullscreen button toggle it, and Esc leaves. A bar with the name, mute, volume and exit appears when the mouse moves and hides with the cursor. It ends by itself when the stream does (FR-18, UC-10).
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
 - **Pop-out window**: watch the stream in its own window while the controls stay in the main one.
 - **Toggle the stats overlay**, off by default for normal users.
