@@ -9,7 +9,8 @@ publish.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 bytes = "1.12.1"
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+crossbeam = "0.8"
 directories = "6.0.0"
 eframe = "0.36.2"
 gethostname = "1.1.0"
@@ -20,6 +21,7 @@ peeroxide-codec = { path = "../codec" }
 peeroxide-discovery = { path = "../discovery" }
 peeroxide-net = { path = "../net" }
 peeroxide-update = { path = "../update" }
+rayon = "1.12"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 toml = "1.1.6"

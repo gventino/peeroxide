@@ -16,7 +16,7 @@ use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
 use crate::settings::Settings;
 use crate::video::VideoView;
-use crate::viewer_state::{PeerRef, ViewerInput, ViewerState, describe};
+use crate::viewer_state::{PeerRef, ViewerInput, ViewerState};
 
 const LIVE_RED: Color32 = Color32::from_rgb(230, 70, 70);
 const MAX_NAME_CHARS: usize = 40;
@@ -322,7 +322,7 @@ impl App {
                         }
                         SessionEvent::Ended(end) => {
                             if matches!(self.viewer, ViewerState::Connecting { .. }) {
-                                self.watch_note = Some(describe(&end));
+                                self.watch_note = Some(end.to_string());
                             }
                             ViewerInput::Ended(end)
                         }

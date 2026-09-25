@@ -1,11 +1,12 @@
 //! Broadcaster side: capture → fixed canvas → H.264, paced to the preset frame rate.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
+use crossbeam::channel::{Receiver, Sender, bounded};
 use peeroxide_capture::{CaptureError, CaptureOptions, CaptureStream, CloseReason, Next, Source};
 use peeroxide_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
 use peeroxide_net::VideoFrame;
@@ -20,25 +21,29 @@ pub enum EncoderEnd {
 }
 
 /// Shared knobs between the pipeline thread and its users.
-#[derive(Default)]
 pub struct EncoderControl {
     active: AtomicBool,
     keyframe: AtomicBool,
     stop: AtomicBool,
-    wake: (Mutex<()>, Condvar),
+    /// Holds at most one pending wake-up, so one that arrives just before the pipeline goes to
+    /// sleep isn't lost.
+    wake: (Sender<()>, Receiver<()>),
 }
 
 impl EncoderControl {
     pub fn new(active: bool) -> Arc<Self> {
-        let c = Self::default();
-        c.active.store(active, Ordering::Relaxed);
-        Arc::new(c)
+        Arc::new(Self {
+            active: AtomicBool::new(active),
+            keyframe: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
+            wake: bounded(1),
+        })
     }
 
     /// Capture and encoding only run while active (i.e. someone is watching).
     pub fn set_active(&self, active: bool) {
         self.active.store(active, Ordering::Relaxed);
-        self.wake.1.notify_all();
+        self.wake();
     }
 
     pub fn request_keyframe(&self) {
@@ -56,12 +61,17 @@ impl EncoderControl {
     /// Asks the pipeline thread to end and wakes it.
     pub(crate) fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.wake.1.notify_all();
+        self.wake();
     }
 
+    /// Sleeps for `d`, or until the next wake-up (possibly one already pending).
     pub(crate) fn sleep(&self, d: Duration) {
-        let guard = self.wake.0.lock().unwrap();
-        let _ = self.wake.1.wait_timeout(guard, d).unwrap();
+        let _ = self.wake.1.recv_timeout(d);
+    }
+
+    fn wake(&self) {
+        // Full means a wake-up is already pending, which is all that's needed.
+        let _ = self.wake.0.try_send(());
     }
 }
 
@@ -109,8 +119,7 @@ impl EncoderPipeline {
 
 impl Drop for EncoderPipeline {
     fn drop(&mut self) {
-        self.control.stop.store(true, Ordering::Relaxed);
-        self.control.wake.1.notify_all();
+        self.control.stop();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -234,4 +243,40 @@ pub fn wall_clock_us(at: Instant) -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     now.saturating_sub(at.elapsed()).as_micros() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wake_up_sent_before_sleeping_is_not_lost() {
+        let control = EncoderControl::new(false);
+        control.set_active(true);
+        let started = Instant::now();
+        control.sleep(Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(control.is_active());
+    }
+
+    #[test]
+    fn sleep_times_out_without_a_wake_up_and_stop_wakes_it() {
+        let control = EncoderControl::new(false);
+        let started = Instant::now();
+        control.sleep(Duration::from_millis(50));
+        assert!(started.elapsed() >= Duration::from_millis(50));
+
+        let sleeper = std::thread::spawn({
+            let control = control.clone();
+            move || {
+                let started = Instant::now();
+                control.sleep(Duration::from_secs(5));
+                started.elapsed()
+            }
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        control.stop();
+        assert!(sleeper.join().unwrap() < Duration::from_secs(1));
+        assert!(control.is_stopped());
+    }
 }

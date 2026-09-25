@@ -1,5 +1,7 @@
 //! Converts the pixel layouts delivered by the scap backends into tightly packed BGRA.
 
+use rayon::prelude::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Layout {
     /// B, G, R, (ignored) — also covers BGRA.
@@ -22,6 +24,7 @@ impl Layout {
 }
 
 /// `data` may carry per-row padding (PipeWire buffers do); the stride is derived from its length.
+/// Rows are converted in parallel on rayon's pool.
 pub(crate) fn to_bgra(width: u32, height: u32, data: &[u8], layout: Layout) -> Option<Vec<u8>> {
     let (w, h) = (width as usize, height as usize);
     let bpp = layout.bytes_per_pixel();
@@ -30,18 +33,19 @@ pub(crate) fn to_bgra(width: u32, height: u32, data: &[u8], layout: Layout) -> O
         return None;
     }
     let stride = data.len() / h;
-    let mut out = Vec::with_capacity(w * h * 4);
-    for y in 0..h {
-        let src = &data[y * stride..y * stride + row];
-        for px in src.chunks_exact(bpp) {
-            let (r, g, b) = match layout {
-                Layout::Bgrx => (px[2], px[1], px[0]),
-                Layout::Rgbx | Layout::Rgb => (px[0], px[1], px[2]),
-                Layout::Xbgr => (px[3], px[2], px[1]),
-            };
-            out.extend_from_slice(&[b, g, r, 255]);
-        }
-    }
+    let mut out = vec![0u8; w * h * 4];
+    out.par_chunks_exact_mut(w * 4)
+        .zip(data.par_chunks(stride))
+        .for_each(|(dst, src)| {
+            for (px, bgra) in src[..row].chunks_exact(bpp).zip(dst.chunks_exact_mut(4)) {
+                let (r, g, b) = match layout {
+                    Layout::Bgrx => (px[2], px[1], px[0]),
+                    Layout::Rgbx | Layout::Rgb => (px[0], px[1], px[2]),
+                    Layout::Xbgr => (px[3], px[2], px[1]),
+                };
+                bgra.copy_from_slice(&[b, g, r, 255]);
+            }
+        });
     Some(out)
 }
 
@@ -79,5 +83,27 @@ mod tests {
     fn rejects_short_or_empty_buffers() {
         assert_eq!(to_bgra(2, 2, &[0; 15], Layout::Bgrx), None);
         assert_eq!(to_bgra(0, 2, &[0; 16], Layout::Bgrx), None);
+    }
+
+    /// A 1080p conversion per layout, paced at 30 fps like a capture.
+    #[test]
+    #[ignore = "timing; run with --release --ignored --nocapture"]
+    fn conversion_speed() {
+        use std::time::{Duration, Instant};
+        const FRAMES: u32 = 60;
+        for layout in [Layout::Bgrx, Layout::Rgb] {
+            let data: Vec<u8> = (0..1920 * 1080 * layout.bytes_per_pixel())
+                .map(|i| (i % 251) as u8)
+                .collect();
+            let mut busy = Duration::ZERO;
+            for _ in 0..FRAMES {
+                let started = Instant::now();
+                assert!(to_bgra(1920, 1080, &data, layout).is_some());
+                busy += started.elapsed();
+                std::thread::sleep(Duration::from_millis(33));
+            }
+            let ms = busy.as_secs_f64() * 1000.0 / f64::from(FRAMES);
+            println!("{layout:?} 1920x1080: {ms:.2} ms per frame");
+        }
     }
 }

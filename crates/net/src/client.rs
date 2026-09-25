@@ -4,14 +4,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
-use quinn::{Connection, ConnectionError, Endpoint, RecvStream, VarInt};
+use quinn::{Connection, ConnectionError, Endpoint, RecvStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    AudioPacket, ClientMsg, PROTOCOL_VERSION, ServerMsg, VideoFrame, close, read_audio, read_frame,
-    read_msg, read_stream_kind, stream_kind, write_msg,
+    AudioPacket, ClientMsg, CloseCode, PROTOCOL_VERSION, ServerMsg, StreamKind, VideoFrame,
+    read_audio, read_frame, read_msg, read_stream_kind, write_msg,
 };
 use crate::{Fingerprint, tls};
 
@@ -21,18 +21,31 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SessionId(u64);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Why a viewer session ended. `Display` gives the sentence shown to the viewer.
+#[derive(Clone, Debug, PartialEq, Eq, strum::Display)]
 pub enum SessionEnd {
     /// Closed on our side (stopped watching or switched broadcaster).
+    #[strum(to_string = "Stopped watching")]
     Closed,
+    #[strum(to_string = "The broadcaster stopped sharing")]
     BroadcastStopped,
+    #[strum(to_string = "The shared window was closed")]
     SourceClosed,
+    #[strum(to_string = "The broadcaster has reached its viewer limit")]
     Busy,
+    #[strum(to_string = "The broadcaster runs an incompatible version")]
     VersionMismatch,
     /// The peer's certificate does not match the fingerprint it announced.
+    #[strum(
+        to_string = "Identity check failed: the peer's certificate does not match its \
+                     announcement (possible impersonation)"
+    )]
     IdentityMismatch,
+    #[strum(to_string = "Could not reach the broadcaster ({0})")]
     Unreachable(String),
+    #[strum(to_string = "Connection lost ({0})")]
     ConnectionLost(String),
+    #[strum(to_string = "Protocol error ({0})")]
     ProtocolError(String),
 }
 
@@ -99,8 +112,7 @@ impl ViewerClient {
 
     /// Closes all sessions and waits briefly so broadcasters learn about it immediately.
     pub async fn close(&self) {
-        self.endpoint
-            .close(VarInt::from_u32(close::VIEWER_LEFT), b"bye");
+        self.endpoint.close(CloseCode::ViewerLeft.into(), b"bye");
         let _ = timeout(Duration::from_secs(1), self.endpoint.wait_idle()).await;
     }
 
@@ -174,7 +186,7 @@ async fn run(
         let conn = conn.clone();
         tokio::spawn(async move {
             let _ = cancel.await;
-            conn.close(VarInt::from_u32(close::VIEWER_LEFT), b"bye");
+            conn.close(CloseCode::ViewerLeft.into(), b"bye");
         })
     };
     let end = session(
@@ -306,12 +318,12 @@ async fn route_streams(
     while let Ok(mut stream) = conn.accept_uni().await {
         let kind = timeout(HANDSHAKE_TIMEOUT, read_stream_kind(&mut stream)).await;
         match kind {
-            Ok(Ok(Some(stream_kind::VIDEO))) if video.is_some() => {
+            Ok(Ok(Some(StreamKind::Video))) if video.is_some() => {
                 if let Some(tx) = video.take() {
                     let _ = tx.send(stream);
                 }
             }
-            Ok(Ok(Some(stream_kind::AUDIO))) if on_audio.is_some() => {
+            Ok(Ok(Some(StreamKind::Audio))) if on_audio.is_some() => {
                 if let Some(mut on_audio) = on_audio.take() {
                     let conn = conn.clone();
                     _audio = Some(AbortOnDrop(tokio::spawn(async move {
@@ -335,7 +347,7 @@ async fn route_streams(
             }
             other => {
                 tracing::debug!(?other, "refusing an unexpected stream");
-                let _ = stream.stop(VarInt::from_u32(close::PROTOCOL_ERROR));
+                let _ = stream.stop(CloseCode::ProtocolError.into());
             }
         }
     }
@@ -343,22 +355,53 @@ async fn route_streams(
 
 async fn end_reason(conn: &Connection) -> SessionEnd {
     let Ok(reason) = timeout(Duration::from_secs(1), conn.closed()).await else {
-        conn.close(VarInt::from_u32(close::PROTOCOL_ERROR), b"protocol");
+        conn.close(CloseCode::ProtocolError.into(), b"protocol");
         return SessionEnd::ProtocolError("stream ended while connected".into());
     };
     match reason {
         ConnectionError::ApplicationClosed(c) => {
-            match u32::try_from(c.error_code.into_inner()).unwrap_or(u32::MAX) {
-                close::BROADCAST_STOPPED => SessionEnd::BroadcastStopped,
-                close::SOURCE_CLOSED => SessionEnd::SourceClosed,
-                close::BUSY => SessionEnd::Busy,
-                close::VERSION_MISMATCH => SessionEnd::VersionMismatch,
-                close::VIEWER_LEFT => SessionEnd::ConnectionLost("closed by broadcaster".into()),
-                code => SessionEnd::ProtocolError(format!("closed with code {code}")),
+            let code = c.error_code.into_inner();
+            match u32::try_from(code).ok().and_then(CloseCode::from_repr) {
+                Some(CloseCode::BroadcastStopped) => SessionEnd::BroadcastStopped,
+                Some(CloseCode::SourceClosed) => SessionEnd::SourceClosed,
+                Some(CloseCode::Busy) => SessionEnd::Busy,
+                Some(CloseCode::VersionMismatch) => SessionEnd::VersionMismatch,
+                Some(CloseCode::ViewerLeft) => {
+                    SessionEnd::ConnectionLost("closed by broadcaster".into())
+                }
+                Some(CloseCode::ProtocolError) | None => {
+                    SessionEnd::ProtocolError(format!("closed with code {code}"))
+                }
             }
         }
         ConnectionError::LocallyClosed => SessionEnd::Closed,
         ConnectionError::TimedOut => SessionEnd::ConnectionLost("timed out".into()),
         other => SessionEnd::ConnectionLost(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_ends_read_as_sentences() {
+        assert_eq!(
+            SessionEnd::BroadcastStopped.to_string(),
+            "The broadcaster stopped sharing"
+        );
+        assert_eq!(
+            SessionEnd::IdentityMismatch.to_string(),
+            "Identity check failed: the peer's certificate does not match its announcement \
+             (possible impersonation)"
+        );
+        assert_eq!(
+            SessionEnd::Unreachable("192.168.0.9:5000: timed out".into()).to_string(),
+            "Could not reach the broadcaster (192.168.0.9:5000: timed out)"
+        );
+        assert_eq!(
+            SessionEnd::ProtocolError("closed with code 9".into()).to_string(),
+            "Protocol error (closed with code 9)"
+        );
     }
 }
