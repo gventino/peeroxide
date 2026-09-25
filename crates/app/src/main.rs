@@ -7,6 +7,7 @@ mod contacts;
 mod controller;
 mod decoder;
 mod encoder;
+mod fullscreen;
 mod launcher;
 mod settings;
 mod stats;

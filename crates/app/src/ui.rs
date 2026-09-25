@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use eframe::egui::{self, Color32, RichText};
@@ -14,11 +14,13 @@ use crate::audio_encoder::{audio_source, describe as describe_audio};
 use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
+use crate::fullscreen;
 use crate::settings::Settings;
 use crate::video::VideoView;
 use crate::viewer_state::{PeerRef, ViewerInput, ViewerState};
 
 const LIVE_RED: Color32 = Color32::from_rgb(230, 70, 70);
+const FULLSCREEN_BAR_HEIGHT: f32 = 56.0;
 const MAX_NAME_CHARS: usize = 40;
 
 pub struct App {
@@ -44,6 +46,11 @@ pub struct App {
     autostart: bool,
     autowatch: Option<String>,
     update_note: Option<UpdateNote>,
+    /// Asked for this frame by a button or a double-click; applied at the end of the frame.
+    fullscreen_toggle: bool,
+    fullscreen_exit: bool,
+    /// When this app last entered fullscreen.
+    fullscreen_since: Option<Instant>,
 }
 
 /// What the updater has to say in the top bar, e.g. "Updated to 0.5.0".
@@ -86,6 +93,9 @@ impl App {
             autostart: false,
             autowatch: args.watch.as_ref().map(|w| w.to_lowercase()),
             update_note: None,
+            fullscreen_toggle: false,
+            fullscreen_exit: false,
+            fullscreen_since: None,
         };
         app.ctrl.output.set_volume(app.settings.volume());
         app.ctrl.output.set_muted(app.settings.muted);
@@ -658,9 +668,18 @@ impl App {
             } => {
                 ui.label(format!("Watching {broadcaster_name}"));
                 self.volume_ui(ui);
-                if ui.button("■ Stop watching").clicked() {
-                    self.apply(ViewerInput::StopWatching);
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("■ Stop watching").clicked() {
+                        self.apply(ViewerInput::StopWatching);
+                    }
+                    if ui
+                        .button("⛶ Fullscreen")
+                        .on_hover_text("Or press F11, or double-click the video. Esc leaves.")
+                        .clicked()
+                    {
+                        self.fullscreen_toggle = true;
+                    }
+                });
             }
             ViewerState::Disconnected { reason, .. } => {
                 ui.colored_label(ui.visuals().warn_fg_color, reason);
@@ -740,6 +759,82 @@ impl App {
         }
     }
 
+    /// The watched stream alone, with a control bar that hides (with the cursor) when the
+    /// pointer rests.
+    fn fullscreen_ui(&mut self, ui: &mut egui::Ui) {
+        let ViewerState::Streaming {
+            broadcaster_name, ..
+        } = self.viewer.clone()
+        else {
+            return;
+        };
+        let since_entered = self
+            .fullscreen_since
+            .map_or(f32::INFINITY, |t| t.elapsed().as_secs_f32());
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(Color32::BLACK))
+            .show(ui, |ui| {
+                let video = self.video.ui(ui, &self.ctrl.video, "");
+                if video.double_clicked() {
+                    self.fullscreen_toggle = true;
+                }
+                let bar = egui::Rect::from_min_max(
+                    egui::pos2(
+                        video.rect.left(),
+                        video.rect.bottom() - FULLSCREEN_BAR_HEIGHT,
+                    ),
+                    video.rect.right_bottom(),
+                );
+                let (since_moved, on_bar) = ui.input(|i| {
+                    let on_bar = i.pointer.hover_pos().is_some_and(|p| bar.contains(p));
+                    (i.pointer.time_since_last_movement(), on_bar)
+                });
+                if fullscreen::controls_visible(since_moved, since_entered, on_bar) {
+                    self.fullscreen_bar(ui, bar, &broadcaster_name);
+                } else {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+                }
+            });
+    }
+
+    fn fullscreen_bar(&mut self, ui: &mut egui::Ui, bar: egui::Rect, broadcaster_name: &str) {
+        ui.painter()
+            .rect_filled(bar, 0.0, Color32::from_black_alpha(190));
+        let mut ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(bar.shrink2(egui::vec2(16.0, 8.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        // Dark whatever the theme: the bar sits on the video.
+        ui.style_mut().visuals = egui::Visuals::dark();
+        ui.label(RichText::new(format!("Watching {broadcaster_name}")).strong());
+        ui.add_space(16.0);
+        self.volume_ui(&mut ui);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("× Exit fullscreen (Esc)").clicked() {
+                self.fullscreen_exit = true;
+            }
+        });
+    }
+
+    /// Applies this frame's fullscreen requests (keys, buttons, double-clicks) to the window.
+    fn update_fullscreen(&mut self, ctx: &egui::Context, fullscreen: bool) {
+        let streaming = matches!(self.viewer, ViewerState::Streaming { .. });
+        let (f11, escape) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::F11),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        let toggle = std::mem::take(&mut self.fullscreen_toggle) || (streaming && f11);
+        let exit = std::mem::take(&mut self.fullscreen_exit) || (fullscreen && escape);
+        let want = fullscreen::wanted(fullscreen, streaming, toggle, exit);
+        if want != fullscreen {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(want));
+            self.fullscreen_since = want.then(Instant::now);
+        }
+    }
+
     fn watch_overlay(&self) -> String {
         let Some(w) = &self.ctrl.watching else {
             return String::new();
@@ -782,6 +877,14 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
 
+        let ctx = ui.ctx().clone();
+        let fullscreen = ctx.input(|i| i.viewport().fullscreen) == Some(true);
+        if fullscreen && matches!(self.viewer, ViewerState::Streaming { .. }) {
+            self.fullscreen_ui(ui);
+            self.update_fullscreen(&ctx, fullscreen);
+            return;
+        }
+
         egui::Panel::top("identity").show(ui, |ui| {
             ui.horizontal(|ui| {
                 self.identity_ui(ui);
@@ -804,7 +907,13 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| match self.viewer.clone() {
             ViewerState::Streaming { .. } => {
                 let overlay = self.watch_overlay();
-                self.video.ui(ui, &self.ctrl.video, &overlay);
+                if self
+                    .video
+                    .ui(ui, &self.ctrl.video, &overlay)
+                    .double_clicked()
+                {
+                    self.fullscreen_toggle = true;
+                }
             }
             ViewerState::Connecting { peer } => {
                 VideoView::placeholder(ui, &format!("Connecting to {}…", peer.name));
@@ -814,6 +923,7 @@ impl eframe::App for App {
             }
             ViewerState::Idle => VideoView::placeholder(ui, "Pick a broadcaster to watch"),
         });
+        self.update_fullscreen(&ctx, fullscreen);
     }
 }
 

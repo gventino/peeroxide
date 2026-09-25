@@ -1,5 +1,5 @@
 use eframe::egui::{
-    self, Align2, Color32, FontId, Rect, Sense, TextureHandle, TextureOptions, pos2, vec2,
+    self, Align2, Color32, FontId, Rect, Response, Sense, TextureHandle, TextureOptions, pos2, vec2,
 };
 
 use crate::decoder::VideoSlot;
@@ -15,7 +15,8 @@ impl VideoView {
         self.texture = None;
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, slot: &VideoSlot, overlay: &str) {
+    /// The response tells whether the video was double-clicked.
+    pub fn ui(&mut self, ui: &mut egui::Ui, slot: &VideoSlot, overlay: &str) -> Response {
         // The decoder thread already built the image: only the upload happens here.
         if let Some(image) = slot.take() {
             match &mut self.texture {
@@ -31,7 +32,7 @@ impl VideoView {
         }
 
         let area = ui.available_rect_before_wrap();
-        ui.allocate_rect(area, Sense::hover());
+        let response = ui.allocate_rect(area, Sense::click());
         let painter = ui.painter_at(area);
         painter.rect_filled(area, 0.0, Color32::BLACK);
 
@@ -51,6 +52,7 @@ impl VideoView {
             painter.rect_filled(bg, 4.0, Color32::from_black_alpha(170));
             painter.galley(pos, galley, Color32::WHITE);
         }
+        response
     }
 
     pub fn placeholder(ui: &mut egui::Ui, text: &str) {
