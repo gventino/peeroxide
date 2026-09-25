@@ -68,30 +68,12 @@ impl ViewerState {
             (S::Streaming { peer, .. }, I::Ended(end)) if end != SessionEnd::Closed => {
                 S::Disconnected {
                     peer: peer.clone(),
-                    reason: describe(&end),
+                    reason: end.to_string(),
                 }
             }
             (S::Disconnected { .. }, I::Acknowledge) => S::Idle,
             (state, _) => state.clone(),
         }
-    }
-}
-
-pub fn describe(end: &SessionEnd) -> String {
-    match end {
-        SessionEnd::Closed => "Stopped watching".into(),
-        SessionEnd::BroadcastStopped => "The broadcaster stopped sharing".into(),
-        SessionEnd::SourceClosed => "The shared window was closed".into(),
-        SessionEnd::Busy => "The broadcaster has reached its viewer limit".into(),
-        SessionEnd::VersionMismatch => "The broadcaster runs an incompatible version".into(),
-        SessionEnd::IdentityMismatch => {
-            "Identity check failed: the peer's certificate does not match its announcement \
-             (possible impersonation)"
-                .into()
-        }
-        SessionEnd::Unreachable(e) => format!("Could not reach the broadcaster ({e})"),
-        SessionEnd::ConnectionLost(e) => format!("Connection lost ({e})"),
-        SessionEnd::ProtocolError(e) => format!("Protocol error ({e})"),
     }
 }
 

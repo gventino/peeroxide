@@ -12,7 +12,8 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    ClientMsg, ServerMsg, close, read_msg, stream_kind, write_frame, write_msg, write_stream_kind,
+    ClientMsg, CloseCode, ServerMsg, StreamKind, read_msg, write_frame, write_msg,
+    write_stream_kind,
 };
 use crate::*;
 
@@ -316,7 +317,7 @@ async fn other_protocol_versions_are_refused() {
             ConnectionError::ApplicationClosed(c) => {
                 assert_eq!(
                     c.error_code.into_inner(),
-                    u64::from(close::VERSION_MISMATCH)
+                    u64::from(CloseCode::VersionMismatch as u32)
                 )
             }
             other => panic!("unexpected close: {other:?}"),
@@ -571,7 +572,7 @@ async fn raw_broadcaster(odd: Vec<u8>) -> (SocketAddr, Fingerprint, JoinHandle<(
         let mut odd_stream = conn.open_uni().await.unwrap();
         odd_stream.write_all(&odd).await.unwrap();
         let mut video = conn.open_uni().await.unwrap();
-        write_stream_kind(&mut video, stream_kind::VIDEO)
+        write_stream_kind(&mut video, StreamKind::Video)
             .await
             .unwrap();
         for seq in 0.. {
@@ -594,7 +595,7 @@ async fn raw_broadcaster(odd: Vec<u8>) -> (SocketAddr, Fingerprint, JoinHandle<(
 #[tokio::test(flavor = "multi_thread")]
 async fn a_broken_audio_stream_leaves_video_running() {
     // Audio kind byte, then a header announcing a 65535-byte packet (over the limit).
-    let mut broken = vec![stream_kind::AUDIO];
+    let mut broken = vec![StreamKind::Audio as u8];
     broken.extend([0u8; 16]);
     broken.extend(u16::MAX.to_le_bytes());
     let (addr, fp, task) = raw_broadcaster(broken).await;
