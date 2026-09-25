@@ -4,12 +4,13 @@
 //! never locks or allocates. Whoever pushes (the viewer's audio thread) decides timing.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
+use crossbeam::atomic::AtomicCell;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::{CHANNELS, SAMPLE_RATE};
@@ -19,7 +20,8 @@ const GAIN_SMOOTHING: f32 = 0.005;
 
 /// Volume and mute, set by the UI and read by the device callback without locking.
 pub struct OutputControl {
-    volume: AtomicU32,
+    /// Lock-free for `f32` (a test checks it), so the device callback never waits.
+    volume: AtomicCell<f32>,
     muted: AtomicBool,
 }
 
@@ -27,7 +29,7 @@ impl OutputControl {
     /// `volume` is 0.0–1.0.
     pub fn new(volume: f32, muted: bool) -> Arc<Self> {
         let c = Self {
-            volume: AtomicU32::new(0),
+            volume: AtomicCell::new(0.0),
             muted: AtomicBool::new(muted),
         };
         c.set_volume(volume);
@@ -40,11 +42,11 @@ impl OutputControl {
         } else {
             1.0
         };
-        self.volume.store(v.to_bits(), Ordering::Relaxed);
+        self.volume.store(v);
     }
 
     pub fn volume(&self) -> f32 {
-        f32::from_bits(self.volume.load(Ordering::Relaxed))
+        self.volume.load()
     }
 
     pub fn set_muted(&self, muted: bool) {
@@ -283,6 +285,11 @@ impl Linear {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_volume_never_locks() {
+        assert!(AtomicCell::<f32>::is_lock_free());
+    }
 
     #[test]
     fn volume_is_clamped_and_mute_silences() {
