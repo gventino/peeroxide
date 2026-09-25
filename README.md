@@ -139,6 +139,7 @@ Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.264 → R
 - Protocol (version 2): viewers open a control stream (`Hello` → `Welcome`, which says whether audio is shared, then `RequestKeyframe`). The broadcaster opens a video stream carrying `[seq, capture time, keyframe flag, length] + H.264 Annex-B` and, with audio, an audio stream carrying `[seq, capture time, length] + Opus`; each stream starts with a kind byte. Why a session ended (stopped, source closed, busy, version mismatch) travels as a QUIC application close code. In the code, the close codes and stream kinds are enums decoded with strum's `FromRepr`; their numbers never change, because older peers read them.
 - Audio/video sync: both streams carry the broadcaster's capture time. The viewer compares `local time − capture time` for the video being shown and for arriving audio; the unknown clock difference cancels out. It then delays audio (never video) to match, on top of a jitter margin of at least 40 ms. Drift and gaps are absorbed with short skips or silences.
 - Audio never takes video down: if audio can't be captured, the broadcast goes out video-only with a note; a broken audio stream or missing output device only silences audio.
+- Threads: capture, video encode, audio encode, video decode and audio decode each run on their own thread; the network runs on Tokio. Per-frame pixel work that splits well (converting macOS/Linux captures to BGRA, and `windows-capture`'s copy of padded frames) uses rayon, with a pool sized at start: one thread on Windows, two elsewhere. rayon's default of one thread per core spun more CPU than it saved on jobs of a few milliseconds, so scaling the canvas stays on one thread. A paused encoder is woken through a crossbeam channel, and the viewer builds each image on the decoder thread so the UI thread only uploads it.
 - Errors: code that can fail returns `anyhow::Result`, with context saying what it was doing (which file, which socket), and errors are logged and shown with `{e:#}` so their causes aren't lost. Typed errors (`thiserror`) remain only where the caller acts on the kind of error: `UpdateError` (which note the updater shows), `CaptureError` (a source that's gone ends the broadcast as "closed", not as a failure) and the wire protocol's `ProtocolError`. The developer tools (`release-sign`, `serve-release`, `probe`, `bench`, `audio-probe`) print the whole cause chain and exit with code 1 when they fail.
 
 ## Security
@@ -169,6 +170,8 @@ Measured on the development machine (Windows 11, 12-thread desktop CPU, OpenH264
 | 1080p30 monitor broadcast | Broadcaster 3.9 % total CPU (47 % of one core); viewer 2.3 % |
 | Encode time, 1080p | ~9–10 ms typical desktop; 22 ms worst case (full-screen scrolling text) |
 | Encode time, 720p | ~5 ms typical; 11 ms worst case |
+| Scaling a 1080p screen to the 720p canvas | 3.5 ms per frame (one thread; rayon was faster but cost 2–5× the CPU) |
+| Sharing a window, viewer on the same PC (Windows 11 23H2) | Broadcaster 29–36 % of one core; 68–100 % before rayon's pool was sized |
 | Capture → decoded frame | 5 ms (test pattern), 15–18 ms (monitor), ~40 ms (window) |
 | Discovery → watching | ~1.3 s after launch |
 | Broadcaster stops → viewer notified | ~2 ms (graceful) · ~6 s (crash, QUIC idle timeout) |
@@ -186,13 +189,14 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (127) cover:
+Automated tests (130) cover:
 - the wire protocol, including malformed and oversized input, for video and audio, and the fixed values of close codes and stream kinds;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
 - audio over QUIC: in order next to video, absent when not shared, a lagging viewer skipping ahead, and broken or unexpected streams leaving the video running;
 - Opus round trips (tone levels and stereo separation at both bitrates, silence, garbage packets, loss concealment);
-- the playout scheduler (jitter margin, sync with slower and faster video, the 200 ms cap, drift corrections, gaps), 20 ms framing of captured audio, the resampler, the volume control and the test tone;
+- the playout scheduler (jitter margin, sync with slower and faster video, the 200 ms cap, drift corrections, gaps), 20 ms framing of captured audio, the resampler, the volume control (lock-free) and the test tone;
+- the encoder's wake-up (one sent just before it sleeps isn't lost);
 - announcement validation and the peer-table cap, plus a real mDNS round trip;
 - the self-update, against a local server standing in for GitHub:
   - choosing the release: newest newer signed one, pre-releases included; drafts, older or equal versions, unsigned packages and other platforms ignored;
