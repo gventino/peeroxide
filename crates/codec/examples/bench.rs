@@ -1,13 +1,69 @@
-//! Measures capture → canvas → H.264 encode → decode on a real source.
-//! Usage: cargo run --release -p peeroxide-codec --example bench [source-index|test] [seconds] [720|1080]
+//! Measures capture → canvas → H.264 encode → decode on a real source. Run it with `--help` for
+//! the options.
 
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use clap::{Parser, ValueEnum};
 use peeroxide_capture::{CaptureOptions, Next, Source, list_sources, start};
 use peeroxide_codec::{
     Canvas, H264Decoder, H264Encoder, Preset, VideoDecoder, VideoEncoder, canvas_size,
 };
+
+/// Measures capture → canvas → H.264 encode → decode, on a real source or a synthetic one.
+#[derive(Parser)]
+struct Cli {
+    /// What to encode: a source's number in the capture list, `test` for the test pattern, or
+    /// `scroll` for a synthetic full-screen page scrolling by (the worst case).
+    #[arg(default_value = "0", value_parser = parse_input)]
+    input: Input,
+    /// How long to run, in seconds.
+    #[arg(default_value_t = 5)]
+    seconds: u64,
+    /// The quality preset.
+    #[arg(value_enum, default_value_t = Quality::P1080)]
+    quality: Quality,
+}
+
+#[derive(Clone, Copy)]
+enum Input {
+    Source(usize),
+    Test,
+    Scroll,
+}
+
+fn parse_input(s: &str) -> anyhow::Result<Input> {
+    Ok(match s {
+        "test" => Input::Test,
+        "scroll" => Input::Scroll,
+        n => Input::Source(
+            n.parse()
+                .context("expected a source number, test or scroll")?,
+        ),
+    })
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Quality {
+    /// 720p, 30 fps
+    #[value(name = "720")]
+    P720,
+    /// 1080p, 30 fps
+    #[value(name = "1080")]
+    P1080,
+    /// 720p, 20 fps, for links with limited upload
+    Internet,
+}
+
+impl Quality {
+    fn preset(self) -> Preset {
+        match self {
+            Self::P720 => Preset::P720,
+            Self::P1080 => Preset::P1080,
+            Self::Internet => Preset::INTERNET,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Stage(Duration, u32);
@@ -23,28 +79,16 @@ impl Stage {
 }
 
 fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
-    let which = args.next().unwrap_or_else(|| "0".into());
-    let secs: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(5);
-    let preset = match args.next().as_deref() {
-        Some("720") => Preset::P720,
-        Some("internet") => Preset::INTERNET,
-        _ => Preset::P1080,
-    };
-    if which == "scroll" {
-        return scroll_stress(secs, &preset);
-    }
-    let source = if which == "test" {
-        Source::test_pattern()
-    } else {
-        let index: usize = which
-            .parse()
-            .with_context(|| format!("expected a source index, test or scroll, got {which}"))?;
-        list_sources()
+    let cli = Cli::parse();
+    let (secs, preset) = (cli.seconds, cli.quality.preset());
+    let source = match cli.input {
+        Input::Scroll => return scroll_stress(secs, &preset),
+        Input::Test => Source::test_pattern(),
+        Input::Source(index) => list_sources()
             .context("listing sources")?
             .get(index)
             .with_context(|| format!("no source {index}"))?
-            .clone()
+            .clone(),
     };
     println!("source: {} | preset: {}", source.name, preset.name);
 

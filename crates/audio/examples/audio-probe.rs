@@ -1,35 +1,52 @@
-//! Records a few seconds of an audio source into a WAV file and checks the output device.
-//! Usage: cargo run -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]
-//!
-//! * `system`: everything this computer plays except this probe; `PID`: only that process tree.
-//! * Writes `audio-probe.wav` (16-bit stereo, 48 kHz) and prints the peak level every second.
-//! * Opens the default output muted to report its rate and latency; with `--play` it plays the
-//!   recording back audibly instead.
+//! Records a few seconds of an audio source into a WAV file and checks the output device. Run it
+//! with `--help` for the options.
 
 use std::io::Write;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use clap::Parser;
 use peeroxide_audio::{
     AudioOutput, AudioSource, CHANNELS, Next, OutputControl, SAMPLE_RATE, check, start_capture,
 };
 
-fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let play = args.iter().any(|a| a == "--play");
-    let mut positional = args.iter().filter(|a| !a.starts_with("--"));
-    let source = match positional.next().map(String::as_str) {
-        None | Some("system") => AudioSource::System {
+/// Records a few seconds of an audio source into audio-probe.wav (16-bit stereo, 48 kHz),
+/// printing the peak level every second. Then checks the default output device: it opens it
+/// muted to report its rate and latency, or plays the recording back with --play.
+#[derive(Parser)]
+struct Cli {
+    /// What to record: `system` (everything this computer plays except this probe), `tone` (the
+    /// test tone), or a process id (only what that process tree plays).
+    #[arg(default_value = "system", value_parser = parse_source)]
+    source: AudioSource,
+    /// How long to record, in seconds.
+    #[arg(default_value_t = 3)]
+    seconds: u64,
+    /// Play the recording back audibly.
+    #[arg(long)]
+    play: bool,
+}
+
+fn parse_source(s: &str) -> anyhow::Result<AudioSource> {
+    Ok(match s {
+        "system" => AudioSource::System {
             exclude_pid: std::process::id(),
         },
-        Some("tone") => AudioSource::TestTone,
-        Some(pid) => AudioSource::Application {
+        "tone" => AudioSource::TestTone,
+        pid => AudioSource::Application {
             pid: pid
                 .parse()
-                .with_context(|| format!("expected system, tone or a process id, got {pid}"))?,
+                .context("expected system, tone or a process id")?,
         },
-    };
-    let secs: u64 = positional.next().and_then(|a| a.parse().ok()).unwrap_or(3);
+    })
+}
+
+fn main() -> anyhow::Result<()> {
+    let Cli {
+        source,
+        seconds: secs,
+        play,
+    } = Cli::parse();
 
     match check(&source) {
         Ok(()) => println!("{source:?}: available"),
