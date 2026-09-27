@@ -27,6 +27,7 @@ Design documents: [functional requirements](docs/functional-requirements.md) · 
 2. **Watch:** broadcasters on your network appear under **Broadcasting on this network**. Click one to watch it; click another to switch. You only ever watch one stream at a time.
    - If the broadcaster shares audio, a 🔊 mute button and a volume slider appear under the stream's name. They only affect what you hear, and are remembered. Audio plays in sync with the video.
    - **Fullscreen:** press F11, double-click the video, or click **⛶ Fullscreen**. Only the stream is shown. Move the mouse for a bar with the name, mute, volume and an exit button; it hides again, with the cursor, after 2 seconds. Esc, F11 or a double-click go back, and fullscreen ends by itself when the stream ends.
+   - **Mini player:** minimize Peeroxide while watching (or click **🗗 Mini player**, next to Fullscreen and in the fullscreen bar), and the stream keeps playing in a small window that stays on top of the others, like Discord's picture-in-picture. It opens in the bottom-right corner; drag it anywhere and resize it from its top-left grip, and it reopens where you left it. Moving the mouse over it shows the broadcaster's name, mute, **🗖** to go back to Peeroxide (or double-click the video) and **🗙** to stop watching. It closes by itself when the stream ends, and Peeroxide flashes in the taskbar.
 3. **Saved:** everyone you have watched is remembered (★). When they aren't showing up in the list, e.g. discovery doesn't reach them, they appear under **Saved**. Click to connect at their last address, or 🗑 to forget them.
 4. **Check who you are watching:** every peer has an ID such as `7268-E22A`, shown next to its name. It is derived from that peer's certificate, and the connection is refused if the broadcaster can't prove it owns that ID.
    - If two broadcasters share a name, a ⚠ appears; ask the person you expect for their ID (shown in the top bar of their app).
@@ -145,6 +146,7 @@ Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.265 or H.
 - Audio/video sync: both streams carry the broadcaster's capture time. The viewer compares `local time − capture time` for the video being shown and for arriving audio; the unknown clock difference cancels out. It then delays audio (never video) to match, on top of a jitter margin of at least 40 ms. Drift and gaps are absorbed with short skips or silences.
 - Muting apps: Windows process loopback can include or exclude only one process tree per capture, and "everything except Peeroxide" already uses that. So while nothing that plays is muted, a monitor's sound is that single capture, as before. Once an app is muted, every other app is captured on its own (with its child processes) and the captures are mixed: chunks are placed by capture time (small jitter snapped, so each stream continues seamlessly), summed, and released in 10 ms blocks after 40 ms. The list of apps is refreshed every second and right after a choice changes. A process that started a muted app (e.g. a launcher that started Discord) isn't captured, because its capture would include the muted app. Other Peeroxide instances are never captured in this mode.
 - Audio never takes video down: if audio can't be captured, the broadcast goes out video-only with a note; a broken audio stream or missing output device only silences audio.
+- Mini player: eframe repaints a minimized window at most every 100 ms and, while it is minimized, runs only `App::logic` for it: no ui pass, and no new windows. So the mini player is a *deferred* viewport (its own window and repaint loop, at the stream's frame rate) that exists, hidden, for as long as a stream is showing; `App::logic` reveals it the moment the main window is minimized, and from then on the main window's passes run again (every 100 ms) and keep it registered. It shares the main window's video texture, so switching between the two never shows a black frame, even on a still screen.
 - Threads: capture, video encode, audio encode, video decode and audio decode each run on their own thread; the network runs on Tokio. Per-frame pixel work that splits well (converting macOS/Linux captures to BGRA, and `windows-capture`'s copy of padded frames) uses rayon, with a pool sized at start: one thread on Windows, two elsewhere. rayon's default of one thread per core spun more CPU than it saved on jobs of a few milliseconds, so scaling the canvas stays on one thread. A paused encoder is woken through a crossbeam channel, and the viewer builds each image on the decoder thread so the UI thread only uploads it.
 - Errors: code that can fail returns `anyhow::Result`, with context saying what it was doing (which file, which socket), and errors are logged and shown with `{e:#}` so their causes aren't lost. Typed errors (`thiserror`) remain only where the caller acts on the kind of error: `UpdateError` (which note the updater shows), `CaptureError` (a source that's gone ends the broadcast as "closed", not as a failure) and the wire protocol's `ProtocolError`. The developer tools (`release-sign`, `serve-release`, `probe`, `bench`, `audio-probe`) print the whole cause chain and exit with code 1 when they fail.
 
@@ -199,7 +201,7 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (162) cover:
+Automated tests (166) cover:
 - the wire protocol, including malformed and oversized input and unknown codecs, for video and audio, and the fixed values of close codes, stream kinds and codecs;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
@@ -216,7 +218,7 @@ Automated tests (162) cover:
   - behaviour: size caps, skip, rate limits, a silent server (5 s), a second instance, insecure URLs;
   - restart options, and the notes shown after a failure;
 - saved contacts (merge, cap, corrupt files, ID-change detection), the sticky broadcast port, and audio settings defaults for older settings files;
-- the viewer state machine against the use-case diagram, and the fullscreen rules (when to enter and leave, when the controls show);
+- the viewer state machine against the use-case diagram, the fullscreen rules (when to enter and leave, when the controls show), and the mini player's (when it shows, and where it opens: the corner, or where it was left if that's still on screen);
 - the command-line options: clap's own consistency check, contradictory options refused, and the update settings' defaults;
 - H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames;
 - H.265 decoding of a 24 KB fixture made by the AMD encoder: each access unit gives its picture at once, with good quality; joining at a later keyframe; garbage input survived; the viewer switching decoders when the codec changes;
@@ -246,6 +248,8 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - [x] Muting apps, recorded with the audio probe while two processes play different tones (PowerShell 440 Hz, Python 880 Hz): muting either one removes exactly its tone, muting both leaves silence, the mix has no clicks or gaps, and unmuting live brings the tone back within the same second.
 - [x] Muting apps in the app: a monitor broadcast with audio lists Discord (ticked), LibreWolf and Steam, the live audio line says "except Peeroxide and Discord", and a viewer on the same PC receives the audio (128 kbps, no bad packets).
 - [ ] Muting Discord or TeamSpeak in a real call, with the friends in the call watching from other PCs.
+- [x] Mini player, two instances on one PC driven with Win32 input: minimizing shows it in the corner (repainting about 60 times a second while the main window is minimized); dragging moves it; a double-click brings Peeroxide back and hides it; minimizing again reopens it where it was left (also after a restart, from `settings.toml`); 🗙 stops watching and leaves Peeroxide minimized; the broadcaster stopping closes it. The icons render, and the main window shows the stream again at once.
+- [ ] Mini player by hand: the resize grip, the mute button, and a second monitor or a display scale other than 100%.
 - [ ] Audio over Radmin VPN with the **Internet / VPN** preset.
 - [x] H.265 on the RX 6600 (AMD): test pattern at 60 fps with the viewer on the same PC shows "H.265 61.0 fps", nothing dropped.
 - [ ] H.265 between two PCs on the LAN, at 1080p60 and with the Internet / VPN preset over Radmin VPN.
@@ -264,6 +268,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - H.265 is decoded on the CPU, on one thread (libde265): 8–9 ms per 1080p frame on the development PC, fine for 60 fps there, but a slower PC may not keep up with 1080p60.
 - Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.7. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
 - Windows Store (UWP) apps: their windows belong to `ApplicationFrameHost.exe`, so sharing such a window shares none of its sound. Share the monitor instead.
+- The mini player opens on the main monitor's area (it remembers a position only if it's still on that monitor). It has mute but no volume slider. On Linux with Wayland, the system doesn't report minimized windows, so it doesn't appear there (like the rest of Linux, untested).
 - Audio is turned on or off before a broadcast starts; there is no mute-everything while live. Muting single apps works live.
 - Muting apps is Windows-only, like audio capture. While any app is muted, Windows' own notification sounds aren't shared, and an app that starts playing sound is picked up within about a second. An app that started a muted app (e.g. a launcher that started Discord) isn't shared either, since its sound can't be captured without the muted app's. Apps that play sound through another process (e.g. some Windows Store apps) are listed under that process's name.
 - Self-update: Windows only, and the first version with the updater has to be installed by hand. Some antivirus programs distrust apps that replace their own executable; if yours blocks it, download the new version by hand.
@@ -276,7 +281,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 In the platform's application-data directory; on Windows, `%APPDATA%\Peeroxide\data`. `--profile x` uses `profiles\x` inside it. The path is printed on startup (`starting … dir=…`). Data from versions up to 0.2, when the app was called "P2P Screen Share", is moved there on first run.
 
 - `identity.cert.der`, `identity.key.der`: this peer's identity. Deleting them creates a new ID.
-- `settings.toml`: display name, quality preset, broadcast port, whether to share audio, which apps are muted in a shared monitor's sound, and volume/mute.
+- `settings.toml`: display name, quality preset, broadcast port, whether to share audio, which apps are muted in a shared monitor's sound, volume/mute, and where the mini player was left.
 - `contacts.toml`: saved broadcasters (ID, name, last working addresses).
 - `logs/session.log.YYYY-MM-DD`: session log, including update checks and installs.
 

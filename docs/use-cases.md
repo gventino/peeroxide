@@ -26,6 +26,7 @@ flowchart LR
     UC8["UC-08<br/>Adjust Stream Volume"]
     UC9["UC-09<br/>Update on Start"]
     UC10["UC-10<br/>Watch in Fullscreen"]
+    UC11["UC-11<br/>Watch in the Mini Player"]
     User(["Any user"])
 
     Broadcaster --> UC2
@@ -37,6 +38,7 @@ flowchart LR
     Viewer --> UC6
     Viewer --> UC8
     Viewer --> UC10
+    Viewer --> UC11
     User --> UC9
 
     UC3 -.includes.-> UC1
@@ -45,6 +47,7 @@ flowchart LR
     UC7 -.extends.-> UC2
     UC8 -.extends.-> UC3
     UC10 -.extends.-> UC3
+    UC11 -.extends.-> UC3
 ```
 
 ## UC-01 — Discover Broadcasters
@@ -269,3 +272,26 @@ stateDiagram-v2
 - **Exceptions:**
   - If the stream ends while in fullscreen (UC-06), the app leaves fullscreen by itself, so the viewer sees why.
   - A viewer who is also broadcasting keeps broadcasting; the broadcast controls are just out of sight until they leave fullscreen.
+
+## UC-11 — Watch in the Mini Player
+
+- **Actor:** Viewer
+- **Preconditions:** The viewer is watching a broadcaster (UC-03).
+- **Main flow:**
+  1. The viewer minimizes Peeroxide, or clicks "Mini player".
+  2. The stream keeps playing in a small window that stays on top of the others: in the bottom-right corner the first time, and where the viewer left it afterwards. Sound keeps playing as before.
+  3. The viewer may drag it elsewhere or resize it. Moving the mouse over it shows the broadcaster's name, mute (UC-08), "back to Peeroxide" and "stop watching".
+  4. The viewer double-clicks the video, clicks "back to Peeroxide", or restores Peeroxide from the taskbar. The mini player closes and the main window shows the stream again.
+- **Alternate flow — stop from the mini player:** the viewer clicks "stop watching" (or closes the mini player with Alt+F4). The session ends (like "Stop watching" in UC-03) and Peeroxide stays minimized.
+- **Postconditions:** The stream plays throughout; nothing changes for the broadcaster. The mini player's position and size are remembered.
+- **Exceptions:**
+  - If the stream ends while the mini player is up (UC-06), it closes and Peeroxide flashes in the taskbar, so the viewer can see why.
+  - Where the system doesn't report minimized windows (Linux with Wayland), the mini player doesn't appear.
+
+```mermaid
+flowchart TD
+    W["Watching (UC-03)"] -- "Minimize or 'Mini player'" --> M["Mini player on top<br/>(corner, or where it was left)"]
+    M -- "Double-click or 'back to Peeroxide'<br/>or restore from the taskbar" --> W
+    M -- "'Stop watching' or Alt+F4" --> I["Not watching<br/>(Peeroxide stays minimized)"]
+    M -- "Stream ends (UC-06)" --> E["Mini player closes<br/>Peeroxide flashes in the taskbar"]
+```
