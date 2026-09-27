@@ -8,7 +8,7 @@ use anyhow::Context;
 use eframe::egui;
 use peeroxide_audio::{AudioSource, OutputControl};
 use peeroxide_capture::Source;
-use peeroxide_codec::Preset;
+use peeroxide_codec::{Codec, Preset};
 use peeroxide_discovery::{Discovery, Peer};
 use peeroxide_net::{
     BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
@@ -219,10 +219,12 @@ impl Controller {
     /// Starts broadcasting on `preferred_port` when it is free (a random port otherwise) and
     /// returns the port actually used. With `share_audio`, the source's audio is shared too if
     /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why.
+    /// H.265 falls back to H.264 when there is no working GPU encoder.
     pub fn start_broadcast(
         &mut self,
         source: Source,
         preset: Preset,
+        codec: Codec,
         preferred_port: Option<u16>,
         share_audio: bool,
     ) -> anyhow::Result<u16> {
@@ -296,6 +298,7 @@ impl Controller {
             control,
             source.clone(),
             preset,
+            codec,
             {
                 let server = server.clone();
                 move |frame| server.publish(frame)

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use eframe::egui::{self, Color32, RichText};
 use peeroxide_capture::{Source, SourceKind, list_sources};
-use peeroxide_codec::Preset;
+use peeroxide_codec::{Codec, Preset, hardware_h265_encoder};
 use peeroxide_discovery::Peer;
 use peeroxide_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
@@ -31,6 +31,10 @@ pub struct App {
     sources: Vec<Source>,
     selected: usize,
     preset: Preset,
+    /// Preferred codec for broadcasts (`--codec`).
+    codec: Codec,
+    /// The GPU's H.265 encoder, if there is one.
+    h265_encoder: Option<&'static str>,
     viewer_count: usize,
     broadcast_note: Option<String>,
     viewer: ViewerState,
@@ -74,6 +78,8 @@ impl App {
         let mut app = Self {
             ctrl: Controller::new(identity, display_name, ctx)?,
             preset: settings.preset(),
+            codec: args.codec.into(),
+            h265_encoder: hardware_h265_encoder(),
             settings,
             contacts: Contacts::load(&dir),
             watch_target: None,
@@ -214,6 +220,7 @@ impl App {
         match self.ctrl.start_broadcast(
             source,
             self.preset,
+            self.codec,
             self.settings.broadcast_port,
             self.settings.share_audio,
         ) {
@@ -383,17 +390,20 @@ impl App {
                 .selected_text(self.preset.name)
                 .show_ui(ui, |ui| {
                     for p in Preset::ALL {
-                        let hint = format!(
-                            "Up to {}x{}, about {} Mbps of upload{}",
+                        let mut hint = format!(
+                            "Up to {}x{}, at most {} Mbps of upload.",
                             p.max_width,
                             p.max_height,
                             p.bitrate_bps / 1_000_000,
-                            if p == Preset::INTERNET {
-                                ". Recommended for Radmin VPN, Hamachi and other internet links."
-                            } else {
-                                ""
-                            }
                         );
+                        if p == Preset::INTERNET {
+                            hint +=
+                                " Recommended for Radmin VPN, Hamachi and other internet links.";
+                        }
+                        if p.fps >= 60 && self.h265_encoder.is_none() {
+                            hint += " No H.265 encoder was found on the graphics card, so \
+                                     60 fps uses H.264 on the CPU and may not keep up.";
+                        }
                         ui.selectable_value(&mut self.preset, p, p.name)
                             .on_hover_text(hint);
                     }
@@ -428,6 +438,11 @@ impl App {
                     .canvas
                     .map(|(w, h)| format!("{w}x{h} · "))
                     .unwrap_or_default();
+                let codec = stats
+                    .codec
+                    .as_ref()
+                    .map(|c| format!(" · {c}"))
+                    .unwrap_or_default();
                 let audio = b
                     .audio
                     .as_ref()
@@ -437,7 +452,7 @@ impl App {
                     })
                     .unwrap_or_default();
                 ui.weak(format!(
-                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{audio}",
+                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{codec}{audio}",
                     r.fps, r.kbps, r.avg_ms
                 ));
             }
@@ -860,8 +875,12 @@ impl App {
         } else {
             String::new()
         };
+        let codec = s
+            .codec
+            .map(|c| format!("{}  ", c.name()))
+            .unwrap_or_default();
         format!(
-            "{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}{audio}",
+            "{codec}{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}{audio}",
             r.fps, r.kbps, r.avg_ms, s.dropped
         )
     }
