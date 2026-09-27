@@ -1,16 +1,19 @@
-//! Measures capture → canvas → H.264 encode → decode on a real source. Run it with `--help` for
-//! the options.
+//! Measures capture → canvas → encode (H.265 on the GPU or H.264) → decode on a real source.
+//! Run it with `--help` for the options.
 
+use std::io::Write;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use peeroxide_capture::{CaptureOptions, Next, Source, list_sources, start};
 use peeroxide_codec::{
-    Canvas, H264Decoder, H264Encoder, Preset, VideoDecoder, VideoEncoder, canvas_size,
+    Canvas, Codec, EncodedFrame, Preset, VideoDecoder, VideoEncoder, canvas_size, new_decoder,
+    new_encoder,
 };
 
-/// Measures capture → canvas → H.264 encode → decode, on a real source or a synthetic one.
+/// Measures capture → canvas → encode → decode, on a real source or a synthetic one.
 #[derive(Parser)]
 struct Cli {
     /// What to encode: a source's number in the capture list, `test` for the test pattern, or
@@ -23,6 +26,18 @@ struct Cli {
     /// The quality preset.
     #[arg(value_enum, default_value_t = Quality::P1080)]
     quality: Quality,
+    /// The codec: h265 uses the GPU's encoder and falls back to h264 without one, like the app.
+    #[arg(long, value_enum, default_value_t = CodecArg::H265)]
+    codec: CodecArg,
+    /// Also write the encoded stream (Annex-B) to this file, e.g. to play it with ffplay.
+    #[arg(long, value_name = "FILE")]
+    dump: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CodecArg {
+    H264,
+    H265,
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +88,25 @@ impl Quality {
     }
 }
 
+/// Where `--dump` writes the stream, if anywhere.
+struct Output(Option<std::io::BufWriter<std::fs::File>>);
+
+impl Output {
+    fn new(path: Option<&std::path::Path>) -> anyhow::Result<Self> {
+        let file = path
+            .map(|p| std::fs::File::create(p).with_context(|| format!("creating {}", p.display())))
+            .transpose()?;
+        Ok(Self(file.map(std::io::BufWriter::new)))
+    }
+
+    fn write(&mut self, frame: &EncodedFrame) -> anyhow::Result<()> {
+        if let Some(file) = &mut self.0 {
+            file.write_all(&frame.data).context("writing the dump")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct Stage(Duration, u32);
 
@@ -89,8 +123,16 @@ impl Stage {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let (secs, preset) = (cli.seconds, cli.quality.preset());
+    let codec = match cli.codec {
+        CodecArg::H264 => Codec::H264,
+        CodecArg::H265 => Codec::H265,
+    };
+    let mut enc = new_encoder(&preset, codec)?;
+    let mut dec = new_decoder(enc.codec())?;
+    println!("encoder: {}", enc.describe());
+    let mut out = Output::new(cli.dump.as_deref())?;
     let source = match cli.input {
-        Input::Scroll => return scroll_stress(secs, &preset),
+        Input::Scroll => return scroll_stress(secs, &preset, enc, dec, out),
         Input::Test => Source::test_pattern(),
         Input::Source(index) => list_sources()
             .context("listing sources")?
@@ -100,11 +142,13 @@ fn main() -> anyhow::Result<()> {
     };
     println!("source: {} | preset: {}", source.name, preset.name);
 
-    let stream = start(&source, CaptureOptions::default()).context("starting the capture")?;
+    let options = CaptureOptions {
+        fps: preset.fps,
+        ..CaptureOptions::default()
+    };
+    let stream = start(&source, options).context("starting the capture")?;
     let interval = Duration::from_secs_f64(1.0 / f64::from(preset.fps));
     let mut canvas: Option<Canvas> = None;
-    let mut enc = H264Encoder::new(&preset)?;
-    let mut dec = H264Decoder::new()?;
     let (mut t_canvas, mut t_enc, mut t_dec) =
         (Stage::default(), Stage::default(), Stage::default());
     let (mut bytes, mut keyframes) = (0usize, 0u32);
@@ -137,6 +181,7 @@ fn main() -> anyhow::Result<()> {
         if let Some(e) = encoded {
             bytes += e.data.len();
             keyframes += u32::from(e.keyframe);
+            out.write(&e)?;
             let t = Instant::now();
             dec.decode(&e.data)?;
             t_dec.add(t.elapsed());
@@ -154,7 +199,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Worst case for screen sharing: a full-screen, high-detail page scrolling 6 px per frame.
-fn scroll_stress(secs: u64, preset: &Preset) -> anyhow::Result<()> {
+fn scroll_stress(
+    secs: u64,
+    preset: &Preset,
+    mut enc: Box<dyn VideoEncoder>,
+    mut dec: Box<dyn VideoDecoder>,
+    mut out: Output,
+) -> anyhow::Result<()> {
     let (w, h) = (preset.max_width, preset.max_height);
     let page_h = h * 4;
     let mut seed = 0x2545_f491_u32;
@@ -178,8 +229,6 @@ fn scroll_stress(secs: u64, preset: &Preset) -> anyhow::Result<()> {
         }
     }
     println!("synthetic scrolling page {w}x{h}");
-    let mut enc = H264Encoder::new(preset)?;
-    let mut dec = H264Decoder::new()?;
     let (mut t_enc, mut t_dec) = (Stage::default(), Stage::default());
     let (mut bytes, mut keyframes) = (0usize, 0u32);
     let started = Instant::now();
@@ -195,6 +244,7 @@ fn scroll_stress(secs: u64, preset: &Preset) -> anyhow::Result<()> {
         if let Some(e) = e {
             bytes += e.data.len();
             keyframes += u32::from(e.keyframe);
+            out.write(&e)?;
             let t = Instant::now();
             dec.decode(&e.data)?;
             t_dec.add(t.elapsed());
