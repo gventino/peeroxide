@@ -6,7 +6,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use peeroxide_audio::{AudioCapture, AudioChunk, AudioSource, Next, start_capture};
+use peeroxide_audio::{
+    AudioCapture, AudioChunk, AudioSource, MutedApps, Next, start_capture, start_monitor_capture,
+};
 use peeroxide_capture::{Source, SourceKind};
 use peeroxide_codec::opus::{CHANNELS, FRAME_LEN, SAMPLE_RATE};
 use peeroxide_codec::{AudioEncoder, OpusEncoder};
@@ -35,7 +37,7 @@ pub fn audio_source(source: &Source) -> Option<AudioSource> {
 /// How the UI describes what `audio_source` captures.
 pub fn describe(source: &AudioSource) -> &'static str {
     match source {
-        AudioSource::System { .. } => "all sound on this computer, except Peeroxide",
+        AudioSource::System { .. } => "all sound on this computer, except Peeroxide and muted apps",
         AudioSource::Application { .. } => "only sound from this window's app",
         AudioSource::TestTone => "a test tone, beeping with the flashing square",
     }
@@ -55,9 +57,11 @@ pub struct AudioPipeline {
 
 impl AudioPipeline {
     /// `on_end` reports why audio stopped on its own; video is not affected.
+    /// For a monitor, `muted` says which apps to leave out; changes apply within a second.
     pub fn start(
         control: Arc<EncoderControl>,
         source: AudioSource,
+        muted: MutedApps,
         bitrate_bps: u32,
         on_packet: impl FnMut(AudioPacket) + Send + 'static,
         on_end: impl FnOnce(String) + Send + 'static,
@@ -68,7 +72,7 @@ impl AudioPipeline {
             .spawn({
                 let control = control.clone();
                 let stats = stats.clone();
-                move || match run(&control, &source, bitrate_bps, on_packet, &stats) {
+                move || match run(&control, &source, &muted, bitrate_bps, on_packet, &stats) {
                     Ok(()) => tracing::info!(?source, "audio pipeline ended"),
                     Err(e) => {
                         tracing::warn!(?source, "audio pipeline failed: {e:#}");
@@ -104,6 +108,7 @@ struct Session {
 fn run(
     control: &EncoderControl,
     source: &AudioSource,
+    muted: &MutedApps,
     bitrate_bps: u32,
     mut on_packet: impl FnMut(AudioPacket),
     stats: &Mutex<AudioStats>,
@@ -124,7 +129,12 @@ fn run(
         let s = match &mut session {
             Some(s) => s,
             None => {
-                let capture = start_capture(source)?;
+                let capture = match *source {
+                    AudioSource::System { exclude_pid } => {
+                        start_monitor_capture(exclude_pid, muted.clone())?
+                    }
+                    _ => start_capture(source)?,
+                };
                 let encoder = OpusEncoder::new(bitrate_bps)?;
                 tracing::debug!("audio capture started");
                 session.insert(Session {

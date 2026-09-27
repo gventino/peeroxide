@@ -1,0 +1,14 @@
+[package]
+name = "peeroxide-de265-sys"
+description = "The libde265 H.265 decoder (vendored, LGPL-3.0-or-later), built with the cc crate"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+publish.workspace = true
+links = "de265"
+
+[build-dependencies]
+cc = "1.2"
+
+[lints]
+workspace = true

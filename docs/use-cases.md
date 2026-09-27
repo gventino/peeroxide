@@ -26,6 +26,7 @@ flowchart LR
     UC8["UC-08<br/>Adjust Stream Volume"]
     UC9["UC-09<br/>Update on Start"]
     UC10["UC-10<br/>Watch in Fullscreen"]
+    UC11["UC-11<br/>Watch in the Mini Player"]
     User(["Any user"])
 
     Broadcaster --> UC2
@@ -37,6 +38,7 @@ flowchart LR
     Viewer --> UC6
     Viewer --> UC8
     Viewer --> UC10
+    Viewer --> UC11
     User --> UC9
 
     UC3 -.includes.-> UC1
@@ -45,6 +47,7 @@ flowchart LR
     UC7 -.extends.-> UC2
     UC8 -.extends.-> UC3
     UC10 -.extends.-> UC3
+    UC11 -.extends.-> UC3
 ```
 
 ## UC-01 — Discover Broadcasters
@@ -64,12 +67,15 @@ flowchart LR
 - **Preconditions:** The user has granted the OS-level screen-recording permission if required by the platform.
 - **Main flow:**
   1. The user selects a capture source (full desktop or a specific window).
-  2. The user chooses whether to share audio (UC-07); audio is off unless they turn it on.
-  3. The user starts the broadcast.
-  4. The app begins capturing, encoding, and announcing itself via mDNS.
-  5. The app starts accepting incoming viewer connections.
+  2. The user chooses a quality preset (FR-19): 720p or 1080p at 30 or 60 fps, or Internet / VPN (720p at 24 fps).
+  3. The user chooses whether to share audio (UC-07); audio is off unless they turn it on.
+  4. The user starts the broadcast.
+  5. The app begins capturing, encoding (H.265 on the graphics card, or H.264 on the CPU when there is no hardware H.265 encoder), and announcing itself via mDNS.
+  6. The app starts accepting incoming viewer connections.
 - **Postconditions:** The peer is listed as an active broadcaster and can serve viewers.
-- **Exceptions:** If screen-recording permission is denied, the app shows an error and does not start broadcasting.
+- **Exceptions:**
+  - If screen-recording permission is denied, the app shows an error and does not start broadcasting.
+  - If the graphics card's H.265 encoder fails during the broadcast, the app switches to H.264 for the rest of it; viewers follow on their own.
 
 ## UC-03 — View Broadcaster Stream
 
@@ -79,7 +85,7 @@ flowchart LR
   1. The viewer selects a broadcaster from the list.
   2. The app opens a direct P2P connection to that broadcaster.
   3. The broadcaster tells the viewer whether this broadcast includes audio, then starts streaming encoded video (and audio, if shared) to this viewer.
-  4. The viewer's app decodes and renders frames as they arrive, and plays the audio in sync with the video at the viewer's chosen volume (UC-08).
+  4. The viewer's app decodes and renders frames as they arrive (each frame says whether it is H.265 or H.264), and plays the audio in sync with the video at the viewer's chosen volume (UC-08).
   5. The UI shows a "Streaming" status, and whether the broadcaster is sharing audio.
 - **Postconditions:** The viewer is watching (and, if shared, hearing) exactly one broadcaster's screen.
 - **Exceptions:**
@@ -178,14 +184,18 @@ stateDiagram-v2
   1. The broadcaster turns "Share audio" on. It is off by default; the choice is remembered for the next broadcast.
   2. The app states exactly what will be captured for the selected source:
      - a **window**: only the sound of that window's application (and its child processes);
-     - a **full desktop**: all sound playing on the computer, except Peeroxide's own playback;
+     - a **full desktop**: all sound playing on the computer, except Peeroxide's own playback and the applications the broadcaster mutes;
      - the microphone is **never** captured.
-  3. The broadcaster starts the broadcast (UC-02).
-  4. When the first viewer connects, the app starts capturing and encoding audio alongside the video. Like video, audio capture pauses whenever nobody is watching.
+  3. For a full desktop, the app lists the applications playing sound. The broadcaster ticks the ones viewers shouldn't hear (FR-20); voice and video chat applications start ticked, and the choices are remembered per application.
+  4. The broadcaster starts the broadcast (UC-02).
+  5. When the first viewer connects, the app starts capturing and encoding audio alongside the video. Like video, audio capture pauses whenever nobody is watching.
+- **Alternate flow — change what's muted while live:** during a full-desktop broadcast with audio, the broadcaster ticks or unticks an application. Within about a second, viewers stop or start hearing it; nothing else about the broadcast changes.
 - **Alternate flow — broadcast without audio:** The broadcaster leaves "Share audio" off. Only video is sent, and viewers are told the broadcaster isn't sharing audio.
 - **Postconditions:** Every viewer of this broadcast receives the audio of the selected source, or none if audio is off.
 - **Exceptions:** If audio capture is unavailable (unsupported OS version, no audio service), the broadcast starts video-only and the app tells the broadcaster why. An audio failure during the broadcast never stops the video.
-- **Business rule:** The audio choice is fixed for the whole broadcast. To change it, the broadcaster stops (UC-05) and starts again.
+- **Business rules:**
+  - Turning audio on or off is fixed for the whole broadcast. To change it, the broadcaster stops (UC-05) and starts again. Which applications are muted can change at any time.
+  - While any application is muted, the operating system's own notification sounds aren't shared.
 
 ```mermaid
 flowchart TD
@@ -193,7 +203,7 @@ flowchart TD
     Q -- "Off (default)" --> VO["Broadcast video only<br/>viewers see 'no audio'"]
     Q -- On --> K{"Source kind"}
     K -- Window --> W["Capture only that app's sound"]
-    K -- "Full desktop" --> D["Capture all sound<br/>except Peeroxide"]
+    K -- "Full desktop" --> D["Capture all sound<br/>except Peeroxide<br/>and muted apps"]
     W --> C{"Audio capture<br/>available?"}
     D --> C
     C -- Yes --> AV["Broadcast video + audio"]
@@ -262,3 +272,26 @@ stateDiagram-v2
 - **Exceptions:**
   - If the stream ends while in fullscreen (UC-06), the app leaves fullscreen by itself, so the viewer sees why.
   - A viewer who is also broadcasting keeps broadcasting; the broadcast controls are just out of sight until they leave fullscreen.
+
+## UC-11 — Watch in the Mini Player
+
+- **Actor:** Viewer
+- **Preconditions:** The viewer is watching a broadcaster (UC-03).
+- **Main flow:**
+  1. The viewer minimizes Peeroxide, or clicks "Mini player".
+  2. The stream keeps playing in a small window that stays on top of the others: in the bottom-right corner the first time, and where the viewer left it afterwards. Sound keeps playing as before.
+  3. The viewer may drag it elsewhere or resize it. Moving the mouse over it shows the broadcaster's name, mute (UC-08), "back to Peeroxide" and "stop watching".
+  4. The viewer double-clicks the video, clicks "back to Peeroxide", or restores Peeroxide from the taskbar. The mini player closes and the main window shows the stream again.
+- **Alternate flow — stop from the mini player:** the viewer clicks "stop watching" (or closes the mini player with Alt+F4). The session ends (like "Stop watching" in UC-03) and Peeroxide stays minimized.
+- **Postconditions:** The stream plays throughout; nothing changes for the broadcaster. The mini player's position and size are remembered.
+- **Exceptions:**
+  - If the stream ends while the mini player is up (UC-06), it closes and Peeroxide flashes in the taskbar, so the viewer can see why.
+  - Where the system doesn't report minimized windows (Linux with Wayland), the mini player doesn't appear.
+
+```mermaid
+flowchart TD
+    W["Watching (UC-03)"] -- "Minimize or 'Mini player'" --> M["Mini player on top<br/>(corner, or where it was left)"]
+    M -- "Double-click or 'back to Peeroxide'<br/>or restore from the taskbar" --> W
+    M -- "'Stop watching' or Alt+F4" --> I["Not watching<br/>(Peeroxide stays minimized)"]
+    M -- "Stream ends (UC-06)" --> E["Mini player closes<br/>Peeroxide flashes in the taskbar"]
+```

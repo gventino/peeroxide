@@ -1,14 +1,15 @@
 //! Owns the networking runtime and wires capture/encode → server and client → decode.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Context;
 use eframe::egui;
-use peeroxide_audio::{AudioSource, OutputControl};
+use peeroxide_audio::{AudioSource, MutedApps, OutputControl};
 use peeroxide_capture::Source;
-use peeroxide_codec::Preset;
+use peeroxide_codec::{Codec, Preset};
 use peeroxide_discovery::{Discovery, Peer};
 use peeroxide_net::{
     BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
@@ -17,10 +18,12 @@ use peeroxide_net::{
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
+use crate::app_list::AppList;
 use crate::audio_decoder::{AudioReceiver, AudioReceiverStats};
 use crate::audio_encoder::{AudioPipeline, audio_source};
 use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
 use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
+use crate::mini_player;
 
 pub const MAX_VIEWERS: usize = 8;
 
@@ -138,6 +141,10 @@ pub struct Controller {
     pub watching: Option<Watching>,
     discovery: Option<Discovery>,
     pub discovery_error: Option<String>,
+    /// The apps playing sound, for the "Mute apps" checklist.
+    pub audio_apps: AppList,
+    /// Whether the mini player is open, so new frames repaint it too.
+    pub mini_open: Arc<AtomicBool>,
     generation: u64,
 }
 
@@ -158,6 +165,10 @@ impl Controller {
             ViewerClient::new()?
         };
         let (events_tx, events) = channel();
+        let audio_apps = AppList::start({
+            let ctx = ctx.clone();
+            move || ctx.request_repaint()
+        });
         let mut ctrl = Self {
             rt,
             identity,
@@ -172,6 +183,8 @@ impl Controller {
             watching: None,
             discovery: None,
             discovery_error: None,
+            audio_apps,
+            mini_open: Arc::default(),
             generation: 0,
         };
         ctrl.start_discovery();
@@ -218,13 +231,17 @@ impl Controller {
 
     /// Starts broadcasting on `preferred_port` when it is free (a random port otherwise) and
     /// returns the port actually used. With `share_audio`, the source's audio is shared too if
-    /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why.
+    /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why. A
+    /// monitor's sound leaves out the apps in `muted`, which may change while live.
+    /// H.265 falls back to H.264 when there is no working GPU encoder.
     pub fn start_broadcast(
         &mut self,
         source: Source,
         preset: Preset,
+        codec: Codec,
         preferred_port: Option<u16>,
         share_audio: bool,
+        muted: MutedApps,
     ) -> anyhow::Result<u16> {
         self.stop_broadcast(StopReason::Stopped);
         let _guard = self.rt.enter();
@@ -283,6 +300,7 @@ impl Controller {
                 AudioPipeline::start(
                     audio_control,
                     audio_source,
+                    muted,
                     preset.audio_bitrate_bps,
                     {
                         let server = server.clone();
@@ -296,6 +314,7 @@ impl Controller {
             control,
             source.clone(),
             preset,
+            codec,
             {
                 let server = server.clone();
                 move |frame| server.publish(frame)
@@ -365,7 +384,13 @@ impl Controller {
         };
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = self.ctx.clone();
-            Arc::new(move || ctx.request_repaint())
+            let mini_open = self.mini_open.clone();
+            Arc::new(move || {
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+                if mini_open.load(Ordering::Relaxed) {
+                    ctx.request_repaint_of(mini_player::id());
+                }
+            })
         };
         let mut decoder = DecoderPipeline::start(self.video.clone(), repaint, need_keyframe);
         let decoder_stats = decoder.stats.clone();

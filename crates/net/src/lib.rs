@@ -15,5 +15,5 @@ mod tests;
 
 pub use client::{SessionEnd, SessionEvent, SessionHandle, SessionId, ViewerClient};
 pub use identity::{Fingerprint, Identity};
-pub use protocol::{AudioPacket, PROTOCOL_VERSION, VideoFrame};
+pub use protocol::{AudioPacket, PROTOCOL_VERSION, VideoCodec, VideoFrame};
 pub use server::{BroadcastServer, ServerOptions, StopReason};

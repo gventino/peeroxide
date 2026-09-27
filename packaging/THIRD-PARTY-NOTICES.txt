@@ -1,0 +1,23 @@
+Third-party notices
+===================
+
+Peeroxide is licensed under the Apache License 2.0. Its source code, for
+every version, is at https://github.com/gventino/peeroxide.
+
+
+libde265 (H.265 video decoder)
+------------------------------
+
+peeroxide.exe contains libde265 1.1.3 (https://github.com/strukturag/libde265),
+copyright struktur AG and the libde265 authors. It decodes the H.265 video
+of the broadcasts you watch.
+
+libde265 is free software, distributed under the GNU Lesser General Public
+License, version 3 or (at your option) any later version. Its text follows,
+together with the GNU General Public License version 3 it builds on.
+
+libde265's source code, exactly as built into this program, is in
+crates/de265-sys/vendor in Peeroxide's source code for this version (the
+tag of the release). To use a modified libde265, change those files and
+build Peeroxide from source as its README describes.
+

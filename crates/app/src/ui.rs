@@ -1,11 +1,14 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use eframe::egui::{self, Color32, RichText};
+use peeroxide_audio::{AudioSource, MutedApps};
 use peeroxide_capture::{Source, SourceKind, list_sources};
-use peeroxide_codec::Preset;
+use peeroxide_codec::{Codec, Preset, hardware_h265_encoder};
 use peeroxide_discovery::Peer;
 use peeroxide_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
@@ -15,6 +18,8 @@ use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
 use crate::fullscreen;
+use crate::mini_player::{self, Action};
+use crate::mute_apps;
 use crate::settings::Settings;
 use crate::video::VideoView;
 use crate::viewer_state::{PeerRef, ViewerInput, ViewerState};
@@ -31,6 +36,12 @@ pub struct App {
     sources: Vec<Source>,
     selected: usize,
     preset: Preset,
+    /// Preferred codec for broadcasts (`--codec`).
+    codec: Codec,
+    /// The GPU's H.265 encoder, if there is one.
+    h265_encoder: Option<&'static str>,
+    /// Apps left out of a shared monitor's sound; shared with a running broadcast.
+    muted_apps: MutedApps,
     viewer_count: usize,
     broadcast_note: Option<String>,
     viewer: ViewerState,
@@ -42,7 +53,12 @@ pub struct App {
     watch_note: Option<String>,
     /// Whether the broadcaster we're watching shares audio.
     stream_audio: bool,
-    video: VideoView,
+    /// Shared with the mini player, which draws the same texture.
+    video: Arc<Mutex<VideoView>>,
+    mini: Arc<mini_player::Shared>,
+    /// Where the mini player's window was created; `Some` while a stream is showing.
+    mini_rect: Option<egui::Rect>,
+    mini_visible: bool,
     autostart: bool,
     autowatch: Option<String>,
     update_note: Option<UpdateNote>,
@@ -71,9 +87,15 @@ impl App {
         dir: PathBuf,
         ctx: egui::Context,
     ) -> anyhow::Result<Self> {
+        let ctrl = Controller::new(identity, display_name, ctx)?;
+        let video = Arc::new(Mutex::new(VideoView::default()));
+        let mini = mini_player::Shared::new(video.clone(), ctrl.video.clone(), ctrl.output.clone());
         let mut app = Self {
-            ctrl: Controller::new(identity, display_name, ctx)?,
+            ctrl,
             preset: settings.preset(),
+            codec: args.codec.into(),
+            h265_encoder: hardware_h265_encoder(),
+            muted_apps: MutedApps::new(settings.audio_apps.clone()),
             settings,
             contacts: Contacts::load(&dir),
             watch_target: None,
@@ -89,7 +111,10 @@ impl App {
             connect_input: String::new(),
             watch_note: None,
             stream_audio: false,
-            video: VideoView::default(),
+            video,
+            mini,
+            mini_rect: None,
+            mini_visible: false,
             autostart: false,
             autowatch: args.watch.as_ref().map(|w| w.to_lowercase()),
             update_note: None,
@@ -214,8 +239,10 @@ impl App {
         match self.ctrl.start_broadcast(
             source,
             self.preset,
+            self.codec,
             self.settings.broadcast_port,
             self.settings.share_audio,
+            self.muted_apps.clone(),
         ) {
             Ok(port) if self.settings.broadcast_port != Some(port) => {
                 self.settings.broadcast_port = Some(port);
@@ -228,7 +255,7 @@ impl App {
 
     fn watch(&mut self, target: PeerTarget) {
         self.watch_note = None;
-        self.video.clear();
+        self.video.lock().unwrap().clear();
         self.stream_audio = false;
         self.viewer = self.viewer.transition(ViewerInput::Select(PeerRef {
             fingerprint: target.fingerprint,
@@ -266,7 +293,7 @@ impl App {
         self.viewer = self.viewer.transition(input);
         if !self.viewer.wants_session() && self.session.take().is_some() {
             self.ctrl.stop_watching();
-            self.video.clear();
+            self.video.lock().unwrap().clear();
         }
     }
 
@@ -383,23 +410,26 @@ impl App {
                 .selected_text(self.preset.name)
                 .show_ui(ui, |ui| {
                     for p in Preset::ALL {
-                        let hint = format!(
-                            "Up to {}x{}, about {} Mbps of upload{}",
+                        let mut hint = format!(
+                            "Up to {}x{}, at most {} Mbps of upload.",
                             p.max_width,
                             p.max_height,
                             p.bitrate_bps / 1_000_000,
-                            if p == Preset::INTERNET {
-                                ". Recommended for Radmin VPN, Hamachi and other internet links."
-                            } else {
-                                ""
-                            }
                         );
+                        if p == Preset::INTERNET {
+                            hint +=
+                                " Recommended for Radmin VPN, Hamachi and other internet links.";
+                        }
+                        if p.fps >= 60 && self.h265_encoder.is_none() {
+                            hint += " No H.265 encoder was found on the graphics card, so \
+                                     60 fps uses H.264 on the CPU and may not keep up.";
+                        }
                         ui.selectable_value(&mut self.preset, p, p.name)
                             .on_hover_text(hint);
                     }
                 });
             if self.preset != before {
-                self.settings.preset = Some(self.preset.name.into());
+                self.settings.preset = Some(self.preset.id.into());
                 self.save_settings();
             }
             if !live {
@@ -416,9 +446,27 @@ impl App {
             });
             ui.label(format!("Sharing {}", truncate(&b.source_name, 40)));
             match &b.audio {
-                Some(a) => ui.label(format!("🔊 With audio: {}", describe_audio(&a.source))),
-                None => ui.weak("🔇 No audio"),
-            };
+                Some(a) if matches!(a.source, AudioSource::System { .. }) => {
+                    let except =
+                        mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
+                    ui.label(format!(
+                        "🔊 With audio: all sound on this computer, {except}"
+                    ));
+                    mute_apps::ui(
+                        ui,
+                        &self.ctrl.audio_apps,
+                        &self.muted_apps,
+                        &mut self.settings,
+                        &self.dir,
+                    );
+                }
+                Some(a) => {
+                    ui.label(format!("🔊 With audio: {}", describe_audio(&a.source)));
+                }
+                None => {
+                    ui.weak("🔇 No audio");
+                }
+            }
             if self.viewer_count == 0 {
                 ui.weak("Capture paused until someone watches");
             } else {
@@ -427,6 +475,11 @@ impl App {
                 let size = stats
                     .canvas
                     .map(|(w, h)| format!("{w}x{h} · "))
+                    .unwrap_or_default();
+                let codec = stats
+                    .codec
+                    .as_ref()
+                    .map(|c| format!(" · {c}"))
                     .unwrap_or_default();
                 let audio = b
                     .audio
@@ -437,7 +490,7 @@ impl App {
                     })
                     .unwrap_or_default();
                 ui.weak(format!(
-                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{audio}",
+                    "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{codec}{audio}",
                     r.fps, r.kbps, r.avg_ms
                 ));
             }
@@ -505,6 +558,15 @@ impl App {
                 .map(|c| c.to_uppercase().chain(chars).collect())
                 .unwrap_or_default();
             ui.weak(format!("{scope}. Your microphone is never shared."));
+            if matches!(audio, AudioSource::System { .. }) {
+                mute_apps::ui(
+                    ui,
+                    &self.ctrl.audio_apps,
+                    &self.muted_apps,
+                    &mut self.settings,
+                    &self.dir,
+                );
+            }
         }
     }
 
@@ -679,6 +741,7 @@ impl App {
                     {
                         self.fullscreen_toggle = true;
                     }
+                    mini_player_button(ui);
                 });
             }
             ViewerState::Disconnected { reason, .. } => {
@@ -774,7 +837,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::BLACK))
             .show(ui, |ui| {
-                let video = self.video.ui(ui, &self.ctrl.video, "");
+                let video = self.video.lock().unwrap().ui(ui, &self.ctrl.video, "");
                 if video.double_clicked() {
                     self.fullscreen_toggle = true;
                 }
@@ -814,7 +877,96 @@ impl App {
             if ui.button("× Exit fullscreen (Esc)").clicked() {
                 self.fullscreen_exit = true;
             }
+            mini_player_button(ui);
         });
+    }
+
+    /// Keeps the mini player's window while a stream is showing, visible while the main window
+    /// is minimized; carries out what was clicked in it.
+    fn update_mini_player(&mut self, ctx: &egui::Context, minimized: bool) {
+        for action in self.mini.take_actions() {
+            match action {
+                Action::Stop => self.apply(ViewerInput::StopWatching),
+                Action::Muted(muted) => {
+                    self.settings.muted = muted;
+                    self.save_settings();
+                }
+            }
+        }
+        let ViewerState::Streaming {
+            broadcaster_name, ..
+        } = &self.viewer
+        else {
+            self.drop_mini_player(ctx, minimized);
+            return;
+        };
+        self.mini.set_stream(broadcaster_name, self.stream_audio);
+        let rect = match self.mini_rect {
+            Some(rect) => rect,
+            None => {
+                let monitor = ctx
+                    .input(|i| i.viewport().monitor_size)
+                    .unwrap_or(egui::vec2(1920.0, 1080.0));
+                let saved = self.settings.mini_player.map(|[x, y, w, h]| {
+                    egui::Rect::from_min_size(
+                        egui::pos2(x as f32, y as f32),
+                        egui::vec2(w as f32, h as f32),
+                    )
+                });
+                *self
+                    .mini_rect
+                    .insert(mini_player::placement(monitor, saved))
+            }
+        };
+        let visible = mini_player::wanted(true, minimized);
+        self.set_mini_visible(visible);
+        mini_player::show(ctx, &self.mini, rect, visible);
+    }
+
+    fn set_mini_visible(&mut self, visible: bool) {
+        if visible == self.mini_visible {
+            return;
+        }
+        self.mini_visible = visible;
+        self.ctrl.mini_open.store(visible, Ordering::Relaxed);
+        if visible {
+            mini_player::opened(&self.mini);
+            tracing::info!("mini player shown");
+        } else {
+            self.remember_mini_player();
+            tracing::info!("mini player hidden");
+        }
+    }
+
+    fn remember_mini_player(&mut self) {
+        if let Some(r) = self.mini.last_rect() {
+            let whole = |v: f32| v.round() as i32;
+            let rect = [
+                whole(r.min.x),
+                whole(r.min.y),
+                whole(r.width()),
+                whole(r.height()),
+            ];
+            if self.settings.mini_player != Some(rect) {
+                self.settings.mini_player = Some(rect);
+                self.save_settings();
+            }
+        }
+    }
+
+    /// The stream is over: the mini player's window goes (it's no longer registered).
+    fn drop_mini_player(&mut self, ctx: &egui::Context, minimized: bool) {
+        if self.mini_rect.take().is_none() {
+            return;
+        }
+        let was_visible = self.mini_visible;
+        self.set_mini_visible(false);
+        // The stream ended while Peeroxide is minimized: flash it in the taskbar.
+        if was_visible && minimized && matches!(self.viewer, ViewerState::Disconnected { .. }) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
+        }
     }
 
     /// Applies this frame's fullscreen requests (keys, buttons, double-clicks) to the window.
@@ -860,14 +1012,34 @@ impl App {
         } else {
             String::new()
         };
+        let codec = s
+            .codec
+            .map(|c| format!("{}  ", c.name()))
+            .unwrap_or_default();
         format!(
-            "{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}{audio}",
+            "{codec}{:.1} fps  {:.0} kbps  decode {:.1} ms  dropped {}{latency}{audio}",
             r.fps, r.kbps, r.avg_ms, s.dropped
         )
     }
 }
 
 impl eframe::App for App {
+    /// Also runs while the main window is minimized, when `ui` doesn't: that's when the mini
+    /// player has to appear.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
+        if !minimized {
+            return;
+        }
+        let streaming = matches!(self.viewer, ViewerState::Streaming { .. });
+        if streaming && self.mini_rect.is_some() && !self.mini_visible {
+            mini_player::reveal(ctx);
+            self.set_mini_visible(true);
+        }
+        // Keep checking, even while a still screen sends no frames.
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if std::mem::take(&mut self.autostart) {
             self.start_broadcast();
@@ -878,6 +1050,12 @@ impl eframe::App for App {
         }
 
         let ctx = ui.ctx().clone();
+        let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
+        self.update_mini_player(&ctx, minimized);
+        if minimized {
+            // Nobody sees the main window; the mini player (if any) shows the stream.
+            return;
+        }
         let fullscreen = ctx.input(|i| i.viewport().fullscreen) == Some(true);
         if fullscreen && matches!(self.viewer, ViewerState::Streaming { .. }) {
             self.fullscreen_ui(ui);
@@ -909,6 +1087,8 @@ impl eframe::App for App {
                 let overlay = self.watch_overlay();
                 if self
                     .video
+                    .lock()
+                    .unwrap()
                     .ui(ui, &self.ctrl.video, &overlay)
                     .double_clicked()
                 {
@@ -924,6 +1104,18 @@ impl eframe::App for App {
             ViewerState::Idle => VideoView::placeholder(ui, "Pick a broadcaster to watch"),
         });
         self.update_fullscreen(&ctx, fullscreen);
+    }
+}
+
+/// "🗗 Mini player": minimizing opens the mini player.
+fn mini_player_button(ui: &mut egui::Ui) {
+    if ui
+        .button("🗗 Mini player")
+        .on_hover_text("Keep watching in a small window on top. Minimizing does the same.")
+        .clicked()
+    {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
 

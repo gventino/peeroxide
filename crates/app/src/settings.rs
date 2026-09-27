@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context;
@@ -11,6 +12,7 @@ const FILE: &str = "settings.toml";
 #[serde(default)]
 pub struct Settings {
     pub display_name: Option<String>,
+    /// The quality preset's id (versions up to 0.5 saved its display name, which still loads).
     pub preset: Option<String>,
     /// Reused on every broadcast so connect strings and saved contacts stay valid.
     pub broadcast_port: Option<u16>,
@@ -19,6 +21,11 @@ pub struct Settings {
     /// Playback volume of watched streams, in percent (100 when unset).
     pub volume: Option<u8>,
     pub muted: bool,
+    /// Apps muted (true) or not (false) in a shared monitor's sound, by executable name. Apps
+    /// not listed follow the default: voice chat apps muted, others not.
+    pub audio_apps: BTreeMap<String, bool>,
+    /// Where the mini player was left: x, y, width, height in whole points.
+    pub mini_player: Option<[i32; 4]>,
 }
 
 impl Settings {
@@ -45,7 +52,7 @@ impl Settings {
     pub fn preset(&self) -> Preset {
         self.preset
             .as_deref()
-            .and_then(|name| Preset::ALL.into_iter().find(|p| p.name == name))
+            .and_then(Preset::find)
             .unwrap_or_default()
     }
 }
@@ -61,11 +68,13 @@ mod tests {
 
         let s = Settings {
             display_name: Some("Ana".into()),
-            preset: Some(Preset::P720.name.into()),
+            preset: Some(Preset::P720.id.into()),
             broadcast_port: Some(50123),
             share_audio: true,
             volume: Some(40),
             muted: true,
+            audio_apps: BTreeMap::from([("discord.exe".into(), false), ("game.exe".into(), true)]),
+            mini_player: Some([1504, 791, 400, 225]),
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
@@ -89,12 +98,44 @@ mod tests {
         assert_eq!(s.display_name.as_deref(), Some("Ana"));
         assert!(!s.share_audio);
         assert!(!s.muted);
+        assert!(s.audio_apps.is_empty(), "no choices: the defaults apply");
+        assert_eq!(
+            s.mini_player, None,
+            "the mini player opens in its default corner"
+        );
         assert_eq!(s.volume(), 1.0);
         let loud = Settings {
             volume: Some(250),
             ..Default::default()
         };
         assert_eq!(loud.volume(), 1.0);
+    }
+
+    /// Older versions saved the display name; the Internet preset was renamed from 20 to 24 fps.
+    #[test]
+    fn presets_saved_by_older_versions_still_load() {
+        for (saved, preset) in [
+            ("Internet / VPN · 720p · 20 fps", Preset::INTERNET),
+            ("720p · 30 fps", Preset::P720),
+            ("1080p · 30 fps", Preset::P1080),
+        ] {
+            let s = Settings {
+                preset: Some(saved.into()),
+                ..Default::default()
+            };
+            assert_eq!(s.preset(), preset, "{saved}");
+        }
+    }
+
+    #[test]
+    fn every_preset_roundtrips_by_id() {
+        for preset in Preset::ALL {
+            let s = Settings {
+                preset: Some(preset.id.into()),
+                ..Default::default()
+            };
+            assert_eq!(s.preset(), preset);
+        }
     }
 
     #[test]

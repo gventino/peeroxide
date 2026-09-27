@@ -83,6 +83,7 @@ impl TestServer {
                         seq,
                         capture_time_us: 0,
                         keyframe: want_keyframe.swap(false, SeqCst),
+                        codec: VideoCodec::H265,
                         data: Bytes::from(vec![tag; frame_size]),
                     });
                     tokio::time::sleep(interval).await;
@@ -293,8 +294,8 @@ async fn viewer_limit_rejects_extra_viewers_as_busy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn other_protocol_versions_are_refused() {
-    // 1 is Peeroxide 0.3 (video only), 999 some future version.
-    for version in [1, 999] {
+    // 1 is Peeroxide 0.3 (video only), 2 is 0.4 and 0.5 (H.264 only), 999 some future version.
+    for version in [1, 2, 999] {
         let ts = TestServer::simple(1);
         let endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
         let (config, _) = tls::client_config(ts.identity.fingerprint()).unwrap();
@@ -580,6 +581,7 @@ async fn raw_broadcaster(odd: Vec<u8>) -> (SocketAddr, Fingerprint, JoinHandle<(
                 seq,
                 capture_time_us: 0,
                 keyframe: seq == 0,
+                codec: VideoCodec::H264,
                 data: Bytes::from_static(&[7; 100]),
             };
             if write_frame(&mut video, &frame).await.is_err() {

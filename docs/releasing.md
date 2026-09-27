@@ -25,7 +25,7 @@ The current release key has the ID `1FAB31191B660C70`.
 1. Everything for the release is merged into `main`, docs included: README, roadmap, requirements, and the "NEW" section of `packaging/QUICKSTART.txt`, which goes inside the zip.
 2. **Bump the version:** change `version` in the workspace `Cargo.toml`, run `cargo build` so `Cargo.lock` follows, then commit `Release X.Y.Z` on `main` and push.
 3. **`just check`** (formatting, clippy, all tests).
-4. **`just package`**: builds the release exe, zips it with the quickstart, and **signs the zip** (it asks for the key password). Result:
+4. **`just package`**: builds the release exe, zips it with the quickstart and the third-party notices (libde265's license), and **signs the zip** (it asks for the key password). Result:
    - `dist/peeroxide-X.Y.Z-windows-x64.zip`
    - `dist/peeroxide-X.Y.Z-windows-x64.zip.minisig`
 

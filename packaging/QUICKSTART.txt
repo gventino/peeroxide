@@ -61,15 +61,24 @@ SHARING YOUR SCREEN
 -------------------
 - Under "Broadcast", pick a Source (a monitor or a window) and a Quality,
   then click "Start broadcasting".
-- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 20 fps":
-  about 2 Mbps of upload, enough for most home connections.
+- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 24 fps":
+  at most 2 Mbps of upload, enough for most home connections.
+- The 60 fps presets need a graphics card that can encode H.265 (most
+  NVIDIA, AMD and Intel ones from about 2016 on). Without one, Peeroxide
+  uses H.264 on the processor, which may not keep up with 1080p at 60 fps.
 - To share sound, tick "Share audio" BEFORE you start. It is off by
   default and remembered. What it shares depends on the source:
     * a window:  only the sound of that window's app;
-    * a monitor: all sound on your PC (except Peeroxide itself), which
-                 includes voice calls and notifications;
+    * a monitor: all sound on your PC, except Peeroxide itself and the
+                 apps you mute (see below);
     * your microphone is never shared.
   To turn sound on or off, stop broadcasting and start again.
+- Sharing a monitor with sound: under "Mute apps", tick the apps your
+  viewers shouldn't hear. You still hear them. Discord, TeamSpeak and
+  other voice chat apps start ticked, so friends in a call with you don't
+  hear themselves. You can change it while broadcasting, and it's
+  remembered. While an app is muted, Windows notification sounds aren't
+  shared either.
 - Nothing is captured or sent until someone starts watching.
 
 
@@ -82,6 +91,10 @@ WATCHING
   Otherwise it says "The broadcaster isn't sharing audio".
 - Fullscreen: press F11, double-click the picture, or click "Fullscreen".
   Move the mouse to show the volume and an exit button; Esc leaves.
+- Mini player: minimize Peeroxide while watching (or click "Mini player")
+  and the stream stays in a small window on top of the others. Drag it
+  anywhere; it opens there next time. Double-click it to go back to
+  Peeroxide; its X button stops watching.
 - Next to each name there is an ID like 7268-E22A. The broadcaster sees
   their own ID at the top of their window. If they match, you are watching
   the right person (the app refuses to connect if the ID is faked).

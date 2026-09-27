@@ -1,6 +1,7 @@
 // Release builds are GUI apps on Windows (no console window); logs still go to the log file.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_list;
 mod audio_decoder;
 mod audio_encoder;
 mod contacts;
@@ -9,6 +10,8 @@ mod decoder;
 mod encoder;
 mod fullscreen;
 mod launcher;
+mod mini_player;
+mod mute_apps;
 mod settings;
 mod stats;
 mod ui;
@@ -18,8 +21,9 @@ mod viewer_state;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
-use clap::Parser;
 use clap::builder::FalseyValueParser;
+use clap::{Parser, ValueEnum};
+use peeroxide_codec::Codec;
 use peeroxide_net::Identity;
 use peeroxide_update::RELEASES_API;
 
@@ -51,6 +55,11 @@ pub struct Args {
     #[arg(long)]
     pub name: Option<String>,
 
+    /// Video codec for broadcasts. h265 is encoded on the graphics card, and falls back to
+    /// h264 by itself where there is no GPU encoder; h264 always encodes on the CPU.
+    #[arg(long, value_enum, default_value_t = CodecArg::H265)]
+    pub codec: CodecArg,
+
     /// Don't check for updates at start. In the environment variable, 0, false, off and no
     /// mean "check"; anything else turns the check off.
     #[arg(long, env = "PEEROXIDE_NO_UPDATE", value_parser = FalseyValueParser::new())]
@@ -64,6 +73,21 @@ pub struct Args {
     /// check once.
     #[arg(long, hide = true, value_name = "VERSION")]
     pub just_updated: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum CodecArg {
+    H264,
+    H265,
+}
+
+impl From<CodecArg> for Codec {
+    fn from(arg: CodecArg) -> Self {
+        match arg {
+            CodecArg::H264 => Self::H264,
+            CodecArg::H265 => Self::H265,
+        }
+    }
 }
 
 fn parse_profile(s: &str) -> anyhow::Result<String> {
@@ -274,6 +298,21 @@ mod tests {
         let a =
             Args::try_parse_from(["peeroxide", "--update-url", "http://127.0.0.1:1/r"]).unwrap();
         assert_eq!(a.update_url, "http://127.0.0.1:1/r");
+    }
+
+    #[test]
+    fn broadcasts_prefer_h265_unless_told_otherwise() {
+        let codec = |list: &[&str]| {
+            Codec::from(
+                Args::try_parse_from([&["peeroxide"], list].concat())
+                    .unwrap()
+                    .codec,
+            )
+        };
+        assert_eq!(codec(&[]), Codec::H265);
+        assert_eq!(codec(&["--codec", "h264"]), Codec::H264);
+        assert_eq!(codec(&["--codec", "h265"]), Codec::H265);
+        assert!(Args::try_parse_from(["peeroxide", "--codec", "vp9"]).is_err());
     }
 
     fn old_layout(root: &Path) -> PathBuf {

@@ -1,4 +1,5 @@
-//! Broadcaster side: capture → fixed canvas → H.264, paced to the preset frame rate.
+//! Broadcaster side: capture → fixed canvas → H.265 on the GPU (or H.264 in software), paced to
+//! the preset frame rate.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,8 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, bail};
 use crossbeam::channel::{Receiver, Sender, bounded};
 use peeroxide_capture::{CaptureError, CaptureOptions, CaptureStream, CloseReason, Next, Source};
-use peeroxide_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
-use peeroxide_net::VideoFrame;
+use peeroxide_codec::{Canvas, Codec, H264Encoder, Preset, VideoEncoder, canvas_size, new_encoder};
+use peeroxide_net::{VideoCodec, VideoFrame};
 
 use crate::stats::Meter;
 
@@ -79,6 +80,8 @@ impl EncoderControl {
 pub struct EncoderStats {
     pub meter: Meter,
     pub canvas: Option<(u32, u32)>,
+    /// The encoder in use while capturing, e.g. "H.265 · AMDh265Encoder".
+    pub codec: Option<String>,
 }
 
 pub struct EncoderPipeline {
@@ -92,6 +95,7 @@ impl EncoderPipeline {
         control: Arc<EncoderControl>,
         source: Source,
         preset: Preset,
+        codec: Codec,
         on_packet: impl FnMut(VideoFrame) + Send + 'static,
         on_end: impl FnOnce(EncoderEnd) + Send + 'static,
     ) -> anyhow::Result<Self> {
@@ -102,7 +106,7 @@ impl EncoderPipeline {
                 let control = control.clone();
                 let stats = stats.clone();
                 move || {
-                    let end = run(&control, &source, &preset, on_packet, &stats)
+                    let end = run(&control, &source, &preset, codec, on_packet, &stats)
                         .unwrap_or_else(|e| EncoderEnd::Failed(format!("{e:#}")));
                     tracing::info!(?end, source = %source.name, "encoder pipeline ended");
                     on_end(end);
@@ -129,7 +133,7 @@ impl Drop for EncoderPipeline {
 struct Session {
     capture: CaptureStream,
     canvas: Option<Canvas>,
-    encoder: H264Encoder,
+    encoder: Box<dyn VideoEncoder>,
 }
 
 /// Returns how the pipeline ended on its own; an error means it failed.
@@ -137,6 +141,7 @@ fn run(
     control: &EncoderControl,
     source: &Source,
     preset: &Preset,
+    mut codec: Codec,
     mut on_packet: impl FnMut(VideoFrame),
     stats: &Mutex<EncoderStats>,
 ) -> anyhow::Result<EncoderEnd> {
@@ -155,7 +160,9 @@ fn run(
         if !control.active.load(Ordering::Relaxed) {
             if session.take().is_some() {
                 tracing::debug!("no viewers: capture paused");
-                stats.lock().unwrap().canvas = None;
+                let mut stats = stats.lock().unwrap();
+                stats.canvas = None;
+                stats.codec = None;
             }
             control.sleep(Duration::from_millis(250));
             continue;
@@ -175,8 +182,9 @@ fn run(
                     Err(CaptureError::SourceNotFound) => return Ok(EncoderEnd::SourceClosed),
                     Err(e) => return Err(e.into()),
                 };
-                let encoder = H264Encoder::new(preset)?;
-                tracing::debug!("capture started");
+                let encoder = new_encoder(preset, codec)?;
+                tracing::info!(encoder = %encoder.describe(), "capture started");
+                stats.lock().unwrap().codec = Some(encoder.describe());
                 session.insert(Session {
                     capture,
                     canvas: None,
@@ -218,9 +226,21 @@ fn run(
         }
 
         let started = Instant::now();
-        let encoded = s
-            .encoder
-            .encode(canvas.bgra(), canvas.width(), canvas.height())?;
+        let (bgra, w, h) = (canvas.bgra(), canvas.width(), canvas.height());
+        let encoded = match s.encoder.encode(bgra, w, h) {
+            Ok(encoded) => encoded,
+            // A GPU encoder that fails mid-broadcast is replaced for the rest of it. Viewers
+            // follow: the codec travels with every frame, and the new encoder starts with a
+            // keyframe.
+            Err(e) if s.encoder.codec() == Codec::H265 => {
+                tracing::warn!("H.265 encoder failed, switching to H.264: {e:#}");
+                codec = Codec::H264;
+                s.encoder = Box::new(H264Encoder::new(preset)?);
+                stats.lock().unwrap().codec = Some(s.encoder.describe());
+                s.encoder.encode(bgra, w, h)?
+            }
+            Err(e) => return Err(e),
+        };
         let Some(encoded) = encoded else { continue };
         stats
             .lock()
@@ -231,6 +251,10 @@ fn run(
         on_packet(VideoFrame {
             seq,
             keyframe: encoded.keyframe,
+            codec: match s.encoder.codec() {
+                Codec::H264 => VideoCodec::H264,
+                Codec::H265 => VideoCodec::H265,
+            },
             capture_time_us: wall_clock_us(captured_at),
             data: encoded.data.into(),
         });

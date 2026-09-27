@@ -4,10 +4,17 @@
 //!
 //! Capture is enforced by the OS API itself (abuse case AC-10): a shared window's audio comes
 //! from that application's process tree only, and a shared screen's from everything except
-//! Peeroxide. The microphone is never captured.
+//! Peeroxide and the apps the broadcaster muted. The microphone is never captured.
 
+// Listing apps and mixing their captures only runs where per-app capture exists (Windows).
+#[cfg_attr(not(windows), allow(dead_code))]
+mod apps;
+#[cfg(windows)]
+mod filtered;
 #[cfg(windows)]
 mod loopback;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod mixer;
 mod output;
 mod playout;
 mod tone;
@@ -20,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 
+pub use apps::{AudioApp, MutedApps, audio_apps, is_voice_chat, name_from_exe as app_name};
 pub use output::{AudioOutput, OutputControl};
 pub use playout::{Placement, Playout, PlayoutStats};
 
@@ -127,14 +135,38 @@ impl Sink {
     }
 }
 
-/// Starts capturing `source` on its own thread.
-pub fn start_capture(source: &AudioSource) -> anyhow::Result<AudioCapture> {
+fn new_sink() -> (Sink, Receiver<anyhow::Result<AudioChunk>>, Arc<AtomicBool>) {
     let (tx, rx) = std::sync::mpsc::sync_channel(QUEUE);
     let stop = Arc::new(AtomicBool::new(false));
     let sink = Sink {
         tx,
         stop: stop.clone(),
     };
+    (sink, rx, stop)
+}
+
+/// Starts capturing a shared monitor's sound: everything except `exclude_pid`'s process tree
+/// (Peeroxide) and the apps `muted` leaves out, following its changes within a second. While
+/// nothing that plays is muted, this is the same single capture as [`AudioSource::System`].
+pub fn start_monitor_capture(exclude_pid: u32, muted: MutedApps) -> anyhow::Result<AudioCapture> {
+    let (sink, rx, stop) = new_sink();
+    #[cfg(windows)]
+    let thread = filtered::start(exclude_pid, muted, sink)?;
+    #[cfg(not(windows))]
+    let thread = {
+        let _ = (exclude_pid, muted, sink);
+        anyhow::bail!("audio sharing isn't available on this system yet")
+    };
+    Ok(AudioCapture {
+        rx,
+        stop,
+        thread: Some(thread),
+    })
+}
+
+/// Starts capturing `source` on its own thread.
+pub fn start_capture(source: &AudioSource) -> anyhow::Result<AudioCapture> {
+    let (sink, rx, stop) = new_sink();
     let thread = match source {
         AudioSource::TestTone => tone::start(sink)?,
         #[cfg(windows)]

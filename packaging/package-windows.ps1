@@ -1,4 +1,4 @@
-# Packages target\release\peeroxide.exe with the quickstart into
+# Packages target\release\peeroxide.exe with the quickstart and third-party notices into
 # dist\peeroxide-<version>[-<label>]-windows-x64\ and a .zip of that folder.
 # Run `cargo build --release -p peeroxide` first (`just package` does both).
 param([string]$Label = "")
@@ -35,6 +35,12 @@ $text = $text.Replace("{commit}", $commit)
 # CRLF so it reads well in any Windows text editor.
 $text = $text -replace "`r?`n", "`r`n"
 [System.IO.File]::WriteAllText((Join-Path $dir "QUICKSTART.txt"), $text, [System.Text.Encoding]::ASCII)
+
+# libde265's license (LGPL-3.0) must travel with the exe that contains it.
+$notices = Get-Content (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.txt") -Raw
+$notices += Get-Content (Join-Path $root "crates\de265-sys\vendor\COPYING") -Raw
+$notices = $notices -replace "`r?`n", "`r`n"
+[System.IO.File]::WriteAllText((Join-Path $dir "THIRD-PARTY-NOTICES.txt"), $notices, [System.Text.Encoding]::ASCII)
 
 Compress-Archive -Path $dir -DestinationPath $zip
 
