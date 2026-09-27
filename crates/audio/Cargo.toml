@@ -20,3 +20,8 @@ clap = { version = "4.6.7", features = ["derive"] }
 
 [target."cfg(windows)".dependencies]
 wasapi = "0.24.0"
+windows = { version = "0.62", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }

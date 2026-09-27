@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use clap::Parser;
 use peeroxide_audio::{
-    AudioOutput, AudioSource, CHANNELS, Next, OutputControl, SAMPLE_RATE, check, start_capture,
+    AudioOutput, AudioSource, CHANNELS, MutedApps, Next, OutputControl, SAMPLE_RATE, audio_apps,
+    check, start_capture, start_monitor_capture,
 };
 
 /// Records a few seconds of an audio source into audio-probe.wav (16-bit stereo, 48 kHz),
@@ -25,6 +26,18 @@ struct Cli {
     /// Play the recording back audibly.
     #[arg(long)]
     play: bool,
+    /// List the apps that have opened audio, marking the ones a monitor share mutes by default,
+    /// and exit.
+    #[arg(long)]
+    list_apps: bool,
+    /// With `system`: leave this app out, by executable name (e.g. discord.exe), the way a
+    /// monitor share does. Repeat it for several apps. Voice chat apps are left out too.
+    #[arg(long, value_name = "EXE")]
+    mute: Vec<String>,
+    /// With --mute: unmute those apps again after this many seconds, as a broadcaster can
+    /// while live.
+    #[arg(long, value_name = "SECONDS", requires = "mute")]
+    unmute_after: Option<u64>,
 }
 
 fn parse_source(s: &str) -> anyhow::Result<AudioSource> {
@@ -46,7 +59,26 @@ fn main() -> anyhow::Result<()> {
         source,
         seconds: secs,
         play,
+        list_apps,
+        mute,
+        unmute_after,
     } = Cli::parse();
+
+    if list_apps {
+        let muted = MutedApps::default();
+        for app in audio_apps()? {
+            let default = if muted.is_muted(&app.key) {
+                "muted by default"
+            } else {
+                ""
+            };
+            println!(
+                "{:<32} {:<24} pids {:?} {default}",
+                app.name, app.key, app.pids
+            );
+        }
+        return Ok(());
+    }
 
     match check(&source) {
         Ok(()) => println!("{source:?}: available"),
@@ -55,12 +87,28 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
     }
-    let capture = start_capture(&source).context("starting the capture")?;
+    let muted = MutedApps::new(mute.iter().map(|k| (k.clone(), true)));
+    let capture = match source {
+        AudioSource::System { exclude_pid } if !mute.is_empty() => {
+            println!("muting {mute:?} and voice chat apps");
+            start_monitor_capture(exclude_pid, muted.clone())
+        }
+        _ => start_capture(&source),
+    }
+    .context("starting the capture")?;
+    let mut unmute_at = unmute_after.map(Duration::from_secs);
     println!("recording {secs}s…");
     let started = Instant::now();
     let (mut samples, mut chunks, mut peak) = (Vec::new(), 0u32, 0.0f32);
     let mut next_report = Duration::from_secs(1);
     while started.elapsed() < Duration::from_secs(secs) {
+        if unmute_at.is_some_and(|at| started.elapsed() >= at) {
+            println!("unmuting {mute:?}");
+            for key in &mute {
+                muted.set(key, false);
+            }
+            unmute_at = None;
+        }
         match capture.next(Duration::from_millis(100)) {
             Next::Chunk(c) => {
                 chunks += 1;
