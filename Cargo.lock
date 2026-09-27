@@ -3473,6 +3473,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "peeroxide-de265-sys"
+version = "0.5.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "peeroxide-discovery"
 version = "0.5.0"
 dependencies = [
