@@ -3446,6 +3446,7 @@ dependencies = [
  "rtrb",
  "tracing",
  "wasapi",
+ "windows 0.62.2",
 ]
 
 [[package]]

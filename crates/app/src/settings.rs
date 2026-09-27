@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context;
@@ -20,6 +21,11 @@ pub struct Settings {
     /// Playback volume of watched streams, in percent (100 when unset).
     pub volume: Option<u8>,
     pub muted: bool,
+    /// Apps muted (true) or not (false) in a shared monitor's sound, by executable name. Apps
+    /// not listed follow the default: voice chat apps muted, others not.
+    pub audio_apps: BTreeMap<String, bool>,
+    /// Where the mini player was left: x, y, width, height in whole points.
+    pub mini_player: Option<[i32; 4]>,
 }
 
 impl Settings {
@@ -67,6 +73,8 @@ mod tests {
             share_audio: true,
             volume: Some(40),
             muted: true,
+            audio_apps: BTreeMap::from([("discord.exe".into(), false), ("game.exe".into(), true)]),
+            mini_player: Some([1504, 791, 400, 225]),
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
@@ -90,6 +98,11 @@ mod tests {
         assert_eq!(s.display_name.as_deref(), Some("Ana"));
         assert!(!s.share_audio);
         assert!(!s.muted);
+        assert!(s.audio_apps.is_empty(), "no choices: the defaults apply");
+        assert_eq!(
+            s.mini_player, None,
+            "the mini player opens in its default corner"
+        );
         assert_eq!(s.volume(), 1.0);
         let loud = Settings {
             volume: Some(250),

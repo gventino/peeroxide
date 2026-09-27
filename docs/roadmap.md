@@ -39,6 +39,8 @@ These pass automated tests, but nobody has clicked through them yet:
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
 - H.265 (built after 0.5.0): between two PCs on a LAN at 1080p60; the Internet / VPN preset (24 fps) over Radmin VPN; NVIDIA and Intel graphics; and a PC without a hardware H.265 encoder falling back to H.264 by itself. Checked so far: the AMD encoder (RX 6600) with the viewer on the same PC, and the fallback forced with `--codec h264`.
+- Mini player (built after 0.5.0): the resize grip and the mute button by hand; a second monitor; display scaling other than 100%; a viewer on another PC. Checked so far with two instances on one PC and synthetic input: showing on minimize, dragging, double-click back, the remembered position, stop, and closing when the stream ends.
+- Muting apps (built after 0.5.0): Discord or TeamSpeak muted in a real call, with the friends in the call watching; the mixed sound over time (hours) and with many apps playing. Checked so far: the audio probe with two tones from two processes (each muted alone, both, and unmuted live), and the checklist in the app with a viewer on the same PC.
 - Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
 - Audio, item by item: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); a session over Radmin VPN. Checked so far: audio between two PCs on a LAN (by hand, before the 0.4.0 release), the whole pipeline on one machine (A/V offset about +55–64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
@@ -53,7 +55,7 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 - ✅ Protocol version 2. 0.3 peers get "incompatible version".
 - Known gaps:
   - Windows Store (UWP) windows share no sound: their window belongs to `ApplicationFrameHost.exe`, not the app. Detect that and say so, or look up the app's real process.
-  - No mute while live. The user chose to fix the choice for a broadcast; revisit if needed (AC-11).
+  - No mute-everything while live. The user chose to fix the audio on/off choice for a broadcast; revisit if needed (AC-11). Muting single apps works live since the "Mute apps" checklist (see 0.5).
   - Audio plays about 60 ms after the video when the video path is very fast (test pattern). That is within NFR-13, but could shrink with 10 ms Opus frames or an adaptive jitter margin.
   - Audio packets travel on a reliable stream. Over lossy internet links, QUIC datagrams with Opus loss concealment would avoid retransmission stalls.
 
@@ -67,9 +69,11 @@ Goal: a solid Windows build that is pleasant to watch, and that keeps itself up 
 - **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer · built.** F11, a double-click on the video or the Fullscreen button toggle it, and Esc leaves. A bar with the name, mute, volume and exit appears when the mouse moves and hides with the cursor. It ends by itself when the stream does (FR-18, UC-10).
+- **Mini player (FR-21, UC-11) · built.** Like Discord's picture-in-picture: minimizing Peeroxide while watching (or "🗗 Mini player") keeps the stream in a small window on top of the others. It can be dragged and resized, reopens where it was left, and has mute, back to Peeroxide and stop watching. A deferred egui viewport, pre-created hidden and revealed from `App::logic`, because eframe runs no ui pass for a minimized window. Needs a release after 0.5.0, like H.265 and muting apps.
 - **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves. Needs a release after 0.5.0 (see releasing.md).
+- **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change. Needs a release after 0.5.0, like H.265.
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
-- **Pop-out window**: watch the stream in its own window while the controls stay in the main one.
+- **Pop-out window**: watch the stream in its own window while the controls stay in the main one. The mini player covers the minimized case; this would be a normal, decorated window next to a visible main one.
 - **Toggle the stats overlay**, off by default for normal users.
 - Show the broadcaster's name and ID on the video while watching.
 
@@ -100,6 +104,7 @@ Goal: the same features on all three platforms, tested on real machines. Targets
   - **Linux**: audio is the same on X11 and Wayland; it depends on the sound server. Decide between:
     - PipeWire natively: already a dependency. Per-app capture and "everything except Peeroxide" by linking app streams. Doesn't reach systems where PulseAudio plays the sound (e.g. Ubuntu 22.04 LTS).
     - PulseAudio's API: works on PulseAudio and on PipeWire (through pipewire-pulse). Needs `libpulse-dev` to build. Excluding Peeroxide's own playback is harder, so broadcasting while watching could feed a stream back.
+  - **Muting apps (FR-20)**: ScreenCaptureKit can exclude several applications natively (`excludingApplications`), so macOS needs no mixing. On Linux, PipeWire links per application, so muted apps just aren't linked.
   - **Linux window shares**: on Wayland the portal doesn't say which window was picked, so the window's app can't be found. Share all sound except Peeroxide, labelled as such, or add a "which app's sound?" picker.
   - Needs real machines: none of this can be tested from the Windows development PC. CI (after BUG-01) covers compiling and unit tests only.
 

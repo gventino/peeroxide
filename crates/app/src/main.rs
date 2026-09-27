@@ -1,6 +1,7 @@
 // Release builds are GUI apps on Windows (no console window); logs still go to the log file.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_list;
 mod audio_decoder;
 mod audio_encoder;
 mod contacts;
@@ -9,6 +10,8 @@ mod decoder;
 mod encoder;
 mod fullscreen;
 mod launcher;
+mod mini_player;
+mod mute_apps;
 mod settings;
 mod stats;
 mod ui;
