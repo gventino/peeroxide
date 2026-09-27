@@ -1,13 +1,60 @@
-//! Media pipeline pieces: fixed-size canvas (scale + letterbox), H.264 encode/decode, and Opus
-//! audio encode/decode.
+//! Media pipeline pieces: fixed-size canvas (scale + letterbox), video encode/decode (H.265 on
+//! the GPU where there is a hardware encoder, H.264 in software otherwise; both decode in
+//! software everywhere), and Opus audio encode/decode.
 
 mod canvas;
 mod h264;
+mod h265;
+#[cfg(windows)]
+mod h265_mf;
+#[cfg(not(windows))]
+mod h265_unsupported;
 pub mod opus;
+#[cfg(test)]
+mod test_util;
 
 pub use canvas::{Canvas, FitRect, canvas_size, fit_rect};
 pub use h264::{H264Decoder, H264Encoder};
+pub use h265::H265Decoder;
+#[cfg(windows)]
+pub use h265_mf::{H265Encoder, hardware_h265_encoder};
+#[cfg(not(windows))]
+pub use h265_unsupported::{H265Encoder, hardware_h265_encoder};
 pub use opus::{OpusDecoder, OpusEncoder};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Codec {
+    H264,
+    H265,
+}
+
+impl Codec {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::H265 => "H.265",
+        }
+    }
+}
+
+/// An encoder for `preferred`. H.265 needs a hardware encoder; without a working one this
+/// falls back to H.264 in software, so a broadcast always starts.
+pub fn new_encoder(preset: &Preset, preferred: Codec) -> anyhow::Result<Box<dyn VideoEncoder>> {
+    if preferred == Codec::H265 {
+        match H265Encoder::new(preset) {
+            Ok(encoder) => return Ok(Box::new(encoder)),
+            Err(e) => tracing::info!("using H.264: {e:#}"),
+        }
+    }
+    Ok(Box::new(H264Encoder::new(preset)?))
+}
+
+pub fn new_decoder(codec: Codec) -> anyhow::Result<Box<dyn VideoDecoder>> {
+    Ok(match codec {
+        Codec::H264 => Box::new(H264Decoder::new()?),
+        Codec::H265 => Box::new(H265Decoder::new()?),
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preset {
@@ -114,7 +161,8 @@ pub struct DecodedFrame {
     pub rgba: Vec<u8>,
 }
 
-/// Hardware encoders (NVENC, VideoToolbox, ...) can be added later behind this trait.
+/// Implemented by the software H.264 encoder and the hardware H.265 one; more hardware encoders
+/// (VideoToolbox, VAAPI, ...) can be added behind it.
 pub trait VideoEncoder: Send {
     /// Encodes one BGRA picture. Returns `None` if the encoder skipped the frame.
     fn encode(
@@ -126,6 +174,11 @@ pub trait VideoEncoder: Send {
 
     /// The next encoded frame will be an IDR keyframe.
     fn request_keyframe(&mut self);
+
+    fn codec(&self) -> Codec;
+
+    /// For logs and stats, e.g. "H.265 · AMDh265Encoder".
+    fn describe(&self) -> String;
 }
 
 pub trait VideoDecoder: Send {

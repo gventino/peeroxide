@@ -10,6 +10,17 @@ anyhow = "1.0.104"
 fast_image_resize = "6"
 openh264 = "0.9"
 opus-rs = "0.1.34"
+peeroxide-de265-sys = { path = "../de265-sys" }
+tracing = "0.1.44"
+yuv = "0.8.19"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
 
 [lints]
 workspace = true
