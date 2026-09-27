@@ -12,14 +12,15 @@ Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the 
 
 Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.7 (see the [roadmap](docs/roadmap.md)).
 
-0.5 and 0.4 work together (same protocol), and from 0.5 on the app updates itself, so a group stays on the same version. Earlier releases couldn't talk to the one before: 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
+H.265 changed the protocol (version 3), so this version can't talk to 0.5 or 0.4: both sides show "incompatible version". From 0.5 on the app updates itself when it starts, so a group stays on the same version. 0.5 and 0.4 work together. Earlier releases couldn't talk to the one before: 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
 
 Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md) · [releasing](docs/releasing.md)
 
 ## Using it
 
 1. **Broadcast:** pick a source (a monitor, a window, or the built-in test pattern) and a quality preset, then press **Start broadcasting**. Capture and encoding only run while at least one person is watching.
-   - Presets: **1080p · 30 fps** (~8 Mbps), **720p · 30 fps** (~4 Mbps), and **Internet / VPN · 720p · 20 fps** (~2 Mbps) for Radmin VPN, Hamachi and other links with limited upload.
+   - Presets: **720p** and **1080p**, each at **30** or **60 fps** (at most 4, 6, 8 and 12 Mbps), and **Internet / VPN · 720p · 24 fps** (at most 2 Mbps) for Radmin VPN, Hamachi and other links with limited upload. 24 fps is the frame rate of films, series and anime.
+   - **Video codec:** H.265, encoded by the graphics card (NVIDIA, AMD or Intel, on Windows). It takes little CPU, makes 60 fps easy, looks sharper than H.264 at the same bitrate, and sends less when the picture is simple. Without such an encoder (older graphics cards, virtual machines, and macOS/Linux for now), the broadcast uses H.264 on the CPU by itself; 1080p at 60 fps may then not keep up. The stats under the broadcast show which one is in use. Viewers decode both, on every platform.
    - Each broadcast reuses the same UDP port, so a connect string you shared keeps working.
    - **Share audio** (off by default, remembered) adds sound to the broadcast. It says exactly what it captures: for a window, only that app's sound; for a monitor, all sound on the computer except Peeroxide itself (so broadcasting while watching someone never feeds their stream back). The microphone is never captured. The choice is fixed for the broadcast; stop and start again to change it.
 2. **Watch:** broadcasters on your network appear under **Broadcasting on this network**. Click one to watch it; click another to switch. You only ever watch one stream at a time.
@@ -52,7 +53,7 @@ How releases are signed and published: [docs/releasing.md](docs/releasing.md).
 Requirements:
 
 - Rust stable (edition 2024; tested with 1.97).
-- A C/C++ compiler, because OpenH264 is built from source:
+- A C/C++ compiler, because OpenH264 and libde265 (the H.265 decoder) are built from source:
   - Windows: Visual Studio 2022 Build Tools with the "Desktop development with C++" workload.
   - macOS: Xcode Command Line Tools.
   - Linux: `build-essential`, plus PipeWire and D-Bus development packages for screen capture (`libpipewire-0.3-dev`, `libdbus-1-dev`, `libclang-dev`), ALSA for audio playback (`libasound2-dev`), and the usual eframe dependencies (`libxkbcommon-dev`, `libwayland-dev`, `libgl1-mesa-dev`).
@@ -119,7 +120,8 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 | Crate | Responsibility |
 |---|---|
 | `crates/capture` | Enumerate and capture monitors/windows as BGRA frames. Windows: Windows Graphics Capture via `windows-capture`. macOS/Linux: `scap` (ScreenCaptureKit / PipeWire portal). Includes a synthetic test pattern. |
-| `crates/codec` | Fixed-size canvas (scale + letterbox) and H.264 encode/decode with OpenH264, behind `VideoEncoder`/`VideoDecoder` traits so hardware encoders can be added later. Opus audio (pure Rust, `opus-rs`) behind `AudioEncoder`/`AudioDecoder`. |
+| `crates/codec` | Fixed-size canvas (scale + letterbox). Video behind `VideoEncoder`/`VideoDecoder` traits: H.265 encoded by the graphics card through Media Foundation (Windows) and decoded with libde265, H.264 encoded and decoded with OpenH264, and `new_encoder`, which falls back to H.264 when there is no hardware H.265 encoder. Opus audio (pure Rust, `opus-rs`) behind `AudioEncoder`/`AudioDecoder`. |
+| `crates/de265-sys` | libde265 1.1.3 (LGPL-3.0), vendored and compiled with the `cc` crate (no CMake, no bindgen), and bindings to the part of its C API the codec uses. |
 | `crates/audio` | Audio capture: Windows process loopback via `wasapi` (one app's process tree, or everything except Peeroxide), plus a test tone. Playback via `cpal` with a lock-free ring buffer and volume/mute. The playout scheduler that keeps audio in sync with video. |
 | `crates/net` | Peer identity, fingerprint-pinned TLS 1.3 over QUIC (`quinn`), wire protocol, `BroadcastServer`, `ViewerClient`. |
 | `crates/discovery` | mDNS announce/browse (`mdns-sd`) with validation of untrusted announcements. |
@@ -127,17 +129,18 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 | `crates/app` | `peeroxide` binary: egui UI, controller, capture→encode and decode→display pipelines (video and audio), viewer state machine, settings, logging. |
 
 ```
-Broadcaster: capture ─▶ latest-frame slot ─▶ encoder thread (canvas → I420 → H.264)
+Broadcaster: capture ─▶ latest-frame slot ─▶ encoder thread (canvas → NV12 → H.265 on the GPU, or I420 → H.264)
              ─▶ broadcast channel ─▶ one task per viewer ─▶ QUIC unidirectional stream
              audio capture ─▶ audio encoder thread (20 ms frames → Opus)
              ─▶ broadcast channel ─▶ one task per viewer ─▶ second stream, sent ahead of video
-Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.264 → RGBA) ─▶ latest-frame slot ─▶ GPU texture
+Viewer:      QUIC stream ─▶ bounded queue ─▶ decoder thread (H.265 or H.264 → RGBA) ─▶ latest-frame slot ─▶ GPU texture
              audio stream ─▶ bounded queue ─▶ audio thread (Opus → PCM → playout) ─▶ ring buffer ─▶ device
 ```
 
 - The canvas size is fixed when capture starts, so resizing a shared window letterboxes instead of changing the stream resolution.
 - A viewer that falls behind skips ahead to the next keyframe instead of accumulating delay. Keyframes are produced on demand: when a viewer joins, lags, or reports a decode error.
-- Protocol (version 2): viewers open a control stream (`Hello` → `Welcome`, which says whether audio is shared, then `RequestKeyframe`). The broadcaster opens a video stream carrying `[seq, capture time, keyframe flag, length] + H.264 Annex-B` and, with audio, an audio stream carrying `[seq, capture time, length] + Opus`; each stream starts with a kind byte. Why a session ended (stopped, source closed, busy, version mismatch) travels as a QUIC application close code. In the code, the close codes and stream kinds are enums decoded with strum's `FromRepr`; their numbers never change, because older peers read them.
+- Protocol (version 3): viewers open a control stream (`Hello` → `Welcome`, which says whether audio is shared, then `RequestKeyframe`). The broadcaster opens a video stream carrying `[seq, capture time, keyframe flag, length, codec] + Annex-B` (H.265 or H.264) and, with audio, an audio stream carrying `[seq, capture time, length] + Opus`; each stream starts with a kind byte. Why a session ended (stopped, source closed, busy, version mismatch) travels as a QUIC application close code. In the code, the close codes, stream kinds and codecs are enums decoded with strum's `FromRepr`; their numbers never change, because older peers read them.
+- Codec: the broadcaster asks for H.265 and gets H.264 when the graphics card has no working H.265 encoder. The codec travels in every frame, not once per session, so if the GPU encoder fails mid-broadcast, the broadcaster switches to H.264 for the rest of it and viewers switch decoders at the next keyframe. The H.265 encoder runs with low-delay VBR capped at the preset's bitrate (CBR padded every frame to the full bitrate for no gain in quality), no B-frames, and parameter sets on every keyframe, so each frame comes out right away and a viewer can join at any keyframe.
 - Audio/video sync: both streams carry the broadcaster's capture time. The viewer compares `local time − capture time` for the video being shown and for arriving audio; the unknown clock difference cancels out. It then delays audio (never video) to match, on top of a jitter margin of at least 40 ms. Drift and gaps are absorbed with short skips or silences.
 - Audio never takes video down: if audio can't be captured, the broadcast goes out video-only with a note; a broken audio stream or missing output device only silences audio.
 - Threads: capture, video encode, audio encode, video decode and audio decode each run on their own thread; the network runs on Tokio. Per-frame pixel work that splits well (converting macOS/Linux captures to BGRA, and `windows-capture`'s copy of padded frames) uses rayon, with a pool sized at start: one thread on Windows, two elsewhere. rayon's default of one thread per core spun more CPU than it saved on jobs of a few milliseconds, so scaling the canvas stays on one thread. A paused encoder is woken through a crossbeam channel, and the viewer builds each image on the decoder thread so the UI thread only uploads it.
@@ -160,17 +163,21 @@ Mapping to [abuse-cases.md](docs/abuse-cases.md):
 | AC-12 Malicious update | Updates must carry a minisign signature from the release key, which is kept offline and never on GitHub. The signed comment must name the exact package, and only strictly newer versions are accepted, so neither an old package nor a downgrade can be slipped in. HTTPS only, with size caps; nothing is extracted before verification, and the package's own paths are never used. |
 | AC-13 Update check exposure | One request per start, carrying only the app version; `--no-update` turns it off. |
 
-Not yet addressed: AC-02 (viewers are not authenticated; any peer on the LAN can watch, and hear, a broadcast) and AC-09 (the H.264 decoder is C code running in-process; sandboxing and fuzzing are future work). The Opus decoder is pure Rust on its own thread with panics caught, and survives a 5,000-packet garbage test, but it isn't fuzzed or sandboxed either. Treat broadcasts as visible and audible to everyone on the network.
+Not yet addressed: AC-02 (viewers are not authenticated; any peer on the LAN can watch, and hear, a broadcast) and AC-09 (the video decoders, OpenH264 and libde265, are C and C++ code running in-process; sandboxing and fuzzing are future work). The Opus decoder is pure Rust on its own thread with panics caught, and survives a 5,000-packet garbage test, but it isn't fuzzed or sandboxed either. Treat broadcasts as visible and audible to everyone on the network.
 
 ## Performance
 
-Measured on the development machine (Windows 11, 12-thread desktop CPU, OpenH264 built without NASM), both ends on the same machine:
+Measured on the development machine (Windows 11, 12-thread desktop CPU, Radeon RX 6600 for H.265, OpenH264 built without NASM), both ends on the same machine:
 
 | Scenario | Result |
 |---|---|
 | 1080p30 monitor broadcast | Broadcaster 3.9 % total CPU (47 % of one core); viewer 2.3 % |
 | Encode time, 1080p | ~9–10 ms typical desktop; 22 ms worst case (full-screen scrolling text) |
 | Encode time, 720p | ~5 ms typical; 11 ms worst case |
+| 1080p60, full-screen scrolling text (worst case) | H.265 on the GPU: 5.8 ms per frame including the conversion to NV12, 5.3 Mbps. H.264 on the CPU manages only 39 fps (21 ms per frame) |
+| Internet / VPN preset (720p, 24 fps), scrolling text | H.265: 1.2 Mbps at 55 dB PSNR, under the 2 Mbps budget. H.264: 2.2 Mbps |
+| Decode time (one thread) | H.265 with libde265: 8–9 ms at 1080p, 3–4 ms at 720p. H.264: 4.6 ms and 1.9 ms |
+| 720p60 test pattern, H.265, viewer on the same PC | 61 fps shown, capture → decoded 13 ms |
 | Scaling a 1080p screen to the 720p canvas | 3.5 ms per frame (one thread; rayon was faster but cost 2–5× the CPU) |
 | Sharing a window, viewer on the same PC (Windows 11 23H2) | Broadcaster 29–36 % of one core; 68–100 % before rayon's pool was sized |
 | Capture → decoded frame | 5 ms (test pattern), 15–18 ms (monitor), ~40 ms (window) |
@@ -190,8 +197,8 @@ cargo clippy --workspace --all-targets
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs formatting, clippy and the tests on Windows, macOS and Linux on every push. It is also the only compile check of the macOS/Linux code so far.
 
-Automated tests (133) cover:
-- the wire protocol, including malformed and oversized input, for video and audio, and the fixed values of close codes and stream kinds;
+Automated tests (144) cover:
+- the wire protocol, including malformed and oversized input and unknown codecs, for video and audio, and the fixed values of close codes, stream kinds and codecs;
 - identity persistence and fingerprint rejection;
 - real QUIC sessions on localhost: ordering, keyframe-first, stop reasons, viewer cap, version mismatch (including 0.3 peers), lagging viewers, switching, unreachable peers, which address answered;
 - audio over QUIC: in order next to video, absent when not shared, a lagging viewer skipping ahead, and broken or unexpected streams leaving the video running;
@@ -208,9 +215,13 @@ Automated tests (133) cover:
 - saved contacts (merge, cap, corrupt files, ID-change detection), the sticky broadcast port, and audio settings defaults for older settings files;
 - the viewer state machine against the use-case diagram, and the fullscreen rules (when to enter and leave, when the controls show);
 - the command-line options: clap's own consistency check, contradictory options refused, and the update settings' defaults;
-- H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames.
+- H.264 round trips, canvas letterboxing, and the Internet preset holding its budget on scrolling text without dropping frames;
+- H.265 decoding of a 24 KB fixture made by the AMD encoder: each access unit gives its picture at once, with good quality; joining at a later keyframe; garbage input survived; the viewer switching decoders when the codec changes;
+- the presets: every one saved by id, and names saved by older versions still loading.
 
-Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|1080|internet]` and `cargo run --release -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device). Each tool, like `release-sign` and `serve-release`, explains its options with `--help` (after `--` with `cargo run`).
+`just test-hw` runs what CI can't, in a release build: the GPU's H.265 encoder (keyframes on request, round trips through libde265, joining at a keyframe, the Internet budget and sharpness on scrolling text, 1080p encode time) and the timing measurements.
+
+Developer tools: `cargo run --release -p peeroxide-capture --example probe` (list sources, measure capture rate), `cargo run --release -p peeroxide-codec --example bench [source|test|scroll] [seconds] [720|720-60|1080|1080-60|internet] [--codec h264|h265] [--dump FILE]` and `cargo run --release -p peeroxide-audio --example audio-probe [system|tone|PID] [seconds] [--play]` (record an audio source to `audio-probe.wav` and check the output device). Each tool, like `release-sign` and `serve-release`, explains its options with `--help` (after `--` with `cargo run`).
 
 ### Manual checklist
 
@@ -230,6 +241,10 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - [ ] Sharing a monitor while also watching someone: no echo or feedback.
 - [x] Two machines on the LAN with audio.
 - [ ] Audio over Radmin VPN with the **Internet / VPN** preset.
+- [x] H.265 on the RX 6600 (AMD): test pattern at 60 fps with the viewer on the same PC shows "H.265 61.0 fps", nothing dropped.
+- [ ] H.265 between two PCs on the LAN, at 1080p60 and with the Internet / VPN preset over Radmin VPN.
+- [ ] H.265 on NVIDIA and Intel graphics.
+- [ ] A PC without a hardware H.265 encoder falls back to H.264 (so far only forced with `--codec h264`).
 - [x] Self-update on one PC with a throwaway key and a local server: 0.4.99 updated itself to 0.5.0 in about 2 s and restarted showing "Updated to 0.5.0"; started again, it found nothing newer; a tampered package was rejected and the app opened on its old version; with no server it opened in about 2 s.
 - [x] A release build with the real key checks GitHub itself over HTTPS (Windows certificate store) and reports "up to date" in about 0.4 s.
 - [ ] Self-update by hand: Skip, a read-only folder, two profiles starting at once, and a real update through GitHub (the release after the first one with the updater).
@@ -239,13 +254,15 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 
 - **macOS and Linux are untested.** On macOS, grant Screen Recording permission (System Settings → Privacy & Security) and restart the app. On Linux/Wayland the source is chosen in the system's screen-share dialog.
 - IPv4 only.
-- Software encoding only (OpenH264). Hardware encoders (NVENC, Quick Sync, VideoToolbox) are a planned backend for the encoder trait.
+- H.265 is only encoded on Windows, by the graphics card (tested on AMD; NVIDIA and Intel not yet). Elsewhere, and without such an encoder, broadcasts use H.264 on the CPU, where 1080p at 60 fps may not keep up. VideoToolbox (macOS) and VAAPI (Linux) are planned for 0.7.
+- H.265 is decoded on the CPU, on one thread (libde265): 8–9 ms per 1080p frame on the development PC, fine for 60 fps there, but a slower PC may not keep up with 1080p60.
 - Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.7. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
 - Windows Store (UWP) apps: their windows belong to `ApplicationFrameHost.exe`, so sharing such a window shares none of its sound. Share the monitor instead.
 - Audio is chosen before a broadcast starts; there is no mute while live.
 - Self-update: Windows only, and the first version with the updater has to be installed by hand. Some antivirus programs distrust apps that replace their own executable; if yours blocks it, download the new version by hand.
 - The window list may include a few invisible system windows.
 - OpenH264 built from source is not covered by Cisco's patent license, which only applies to Cisco's prebuilt binary. That's fine for personal LAN use; distribution would need the prebuilt library, which the `openh264` crate can load.
+- H.265 is covered by several patent pools, with no equivalent of Cisco's free license. The GPU encoders are licensed through their makers, but the libde265 decoder in the app isn't. As with OpenH264, that's fine for personal LAN use; wider distribution needs a look first (roadmap 0.8).
 
 ## Where data is kept
 
@@ -261,3 +278,5 @@ While updating, `peeroxide.update.*` files briefly appear next to `peeroxide.exe
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE). The software is provided "as is", without warranty of any kind.
+
+Peeroxide includes libde265, the H.265 decoder, which is licensed under the LGPL-3.0 (see [`crates/de265-sys/vendor/COPYING`](crates/de265-sys/vendor/COPYING)). Release zips carry its notice in `THIRD-PARTY-NOTICES.txt`.

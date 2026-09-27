@@ -64,12 +64,15 @@ flowchart LR
 - **Preconditions:** The user has granted the OS-level screen-recording permission if required by the platform.
 - **Main flow:**
   1. The user selects a capture source (full desktop or a specific window).
-  2. The user chooses whether to share audio (UC-07); audio is off unless they turn it on.
-  3. The user starts the broadcast.
-  4. The app begins capturing, encoding, and announcing itself via mDNS.
-  5. The app starts accepting incoming viewer connections.
+  2. The user chooses a quality preset (FR-19): 720p or 1080p at 30 or 60 fps, or Internet / VPN (720p at 24 fps).
+  3. The user chooses whether to share audio (UC-07); audio is off unless they turn it on.
+  4. The user starts the broadcast.
+  5. The app begins capturing, encoding (H.265 on the graphics card, or H.264 on the CPU when there is no hardware H.265 encoder), and announcing itself via mDNS.
+  6. The app starts accepting incoming viewer connections.
 - **Postconditions:** The peer is listed as an active broadcaster and can serve viewers.
-- **Exceptions:** If screen-recording permission is denied, the app shows an error and does not start broadcasting.
+- **Exceptions:**
+  - If screen-recording permission is denied, the app shows an error and does not start broadcasting.
+  - If the graphics card's H.265 encoder fails during the broadcast, the app switches to H.264 for the rest of it; viewers follow on their own.
 
 ## UC-03 — View Broadcaster Stream
 
@@ -79,7 +82,7 @@ flowchart LR
   1. The viewer selects a broadcaster from the list.
   2. The app opens a direct P2P connection to that broadcaster.
   3. The broadcaster tells the viewer whether this broadcast includes audio, then starts streaming encoded video (and audio, if shared) to this viewer.
-  4. The viewer's app decodes and renders frames as they arrive, and plays the audio in sync with the video at the viewer's chosen volume (UC-08).
+  4. The viewer's app decodes and renders frames as they arrive (each frame says whether it is H.265 or H.264), and plays the audio in sync with the video at the viewer's chosen volume (UC-08).
   5. The UI shows a "Streaming" status, and whether the broadcaster is sharing audio.
 - **Postconditions:** The viewer is watching (and, if shared, hearing) exactly one broadcaster's screen.
 - **Exceptions:**

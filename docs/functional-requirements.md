@@ -55,6 +55,7 @@ Each broadcaster streams independently to whichever viewers are currently connec
 | FR-16 | Viewer Volume Control | A viewer shall be able to change the playback volume of the stream (0–100%) and mute it. The setting only affects that viewer and is remembered across sessions. | Medium |
 | FR-17 | Automatic Updates | Every time it starts, the application shall check for a newer released version and, if one exists, download, verify, install it and restart, with visible progress and an option to skip. Without a newer version, or on any failure, it opens normally on the current version. | High |
 | FR-18 | Fullscreen Viewing | A viewer shall be able to show the watched stream alone, filling the screen, and leave that view at any time with the keyboard or the mouse. The volume controls stay reachable in fullscreen, and fullscreen ends when the stream ends. | Medium |
+| FR-19 | Quality Presets | Before starting a broadcast, a broadcaster shall be able to choose its quality: 720p or 1080p, each at 30 or 60 frames per second, or a low-bandwidth preset for internet links (720p at 24 frames per second). The choice is remembered. | Medium |
 
 ## Traceability Notes
 
@@ -62,4 +63,6 @@ Each broadcaster streams independently to whichever viewers are currently connec
 - FR-08 and FR-09 mean the architecture must treat "broadcaster" and "viewer" as roles a peer can hold independently and simultaneously (a peer could, in principle, broadcast and view at the same time).
 - FR-14 to FR-16: audio is an optional companion to the video, never a dependency. A broadcast or a viewing session must keep working video-only when audio is off, unsupported, or failing (see NFR-05).
 - FR-17 matters because every release so far is incompatible with the previous one (FR-13 only holds between peers on the same version): automatic updates keep a group of peers on the same version. See UC-09, NFR-14, NFR-15 and AC-12.
+- FR-13 holds across codecs: H.265 is only encoded where there is a hardware encoder (Windows, for now), but it is decoded on every platform, and a broadcaster without such an encoder sends H.264, which every platform decodes too.
+- FR-19: 60 fps relies on the graphics card's H.265 encoder (NFR-02, NFR-03). Without one, a 60 fps preset uses H.264 on the CPU and may not reach 60 fps at 1080p; the UI says so.
 - Current status of FR-14: audio capture exists for Windows (10 2004+ and 11) only. macOS and Linux broadcasters can't share audio yet (planned for 0.7, see the roadmap), but viewers on any platform can play audio from a Windows broadcaster, which keeps FR-13 intact.

@@ -33,7 +33,7 @@ mindmap
 | ID | Requirement | Description |
 |----|-------------|-------------|
 | NFR-01 | Latency | End-to-end (capture-to-display) latency should stay under approximately 150 ms on a typical wired/Wi-Fi LAN. This applies to audio (capture-to-playback) as well as video. |
-| NFR-02 | Frame Rate | The system should sustain at least 30 FPS at 1080p on typical consumer hardware from the last ~5 years. |
+| NFR-02 | Frame Rate | The system should sustain at least 30 FPS at 1080p on typical consumer hardware from the last ~5 years, and 60 FPS at 1080p when the broadcaster has a hardware video encoder. |
 | NFR-03 | Resource Efficiency | The application should use hardware-accelerated encode/decode (e.g., NVENC, Quick Sync, VideoToolbox, VAAPI) when available, to minimize CPU load during capture, encoding, and decoding. |
 | NFR-13 | Audio/Video Synchronization | When audio is shared, it should play within about 45 ms before to 125 ms after the matching video (the detectability thresholds of ITU-R BT.1359). Sync is achieved by delaying audio, never by delaying video. |
 
@@ -72,3 +72,8 @@ mindmap
 | ID | Requirement | Description |
 |----|-------------|-------------|
 | NFR-12 | Modular Architecture | Capture, encoding, networking, discovery, and GUI concerns shall be separated into independent modules/crates to ease independent testing and evolution (e.g., swapping the GUI framework or codec later without touching networking code). |
+
+## Status Notes
+
+- NFR-02 and NFR-03: on Windows, the broadcaster encodes H.265 on the graphics card through Media Foundation (the encoders the NVIDIA, AMD and Intel drivers provide), which sustains 1080p at 60 FPS (5.8 ms per frame on a Radeon RX 6600, worst case). Without such an encoder, and on macOS and Linux for now, it encodes H.264 on the CPU, which sustains 1080p at 30 FPS but not always at 60. Decoding is done on the CPU for both codecs.
+- NFR-07: the H.265 decoder (libde265) and the H.264 codec (OpenH264) are compiled into the executable; nothing has to be installed separately. The hardware encoders come with the graphics driver.

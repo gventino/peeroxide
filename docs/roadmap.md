@@ -5,7 +5,7 @@ Where Peeroxide stands after **0.5.0 (pre-alpha)**, and what comes next. Audio, 
 ```mermaid
 flowchart LR
     V04["0.4 ✓<br/>Audio"] --> B["Known bugs"]
-    B --> V05["0.5<br/>Fixes + better viewer<br/>+ self-update"]
+    B --> V05["0.5<br/>Fixes + better viewer<br/>+ self-update + H.265"]
     V05 --> V06["0.6<br/>Privacy controls"]
     V06 --> V07["0.7<br/>macOS + Linux"]
     V07 --> V08["0.8<br/>Distribution"]
@@ -38,6 +38,7 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
+- H.265 (built after 0.5.0): between two PCs on a LAN at 1080p60; the Internet / VPN preset (24 fps) over Radmin VPN; NVIDIA and Intel graphics; and a PC without a hardware H.265 encoder falling back to H.264 by itself. Checked so far: the AMD encoder (RX 6600) with the viewer on the same PC, and the fallback forced with `--codec h264`.
 - Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
 - Audio, item by item: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); a session over Radmin VPN. Checked so far: audio between two PCs on a LAN (by hand, before the 0.4.0 release), the whole pipeline on one machine (A/V offset about +55–64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
@@ -66,6 +67,7 @@ Goal: a solid Windows build that is pleasant to watch, and that keeps itself up 
 - **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer · built.** F11, a double-click on the video or the Fullscreen button toggle it, and Esc leaves. A bar with the name, mute, volume and exit appears when the mouse moves and hides with the cursor. It ends by itself when the stream does (FR-18, UC-10).
+- **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves. Needs a release after 0.5.0 (see releasing.md).
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
 - **Pop-out window**: watch the stream in its own window while the controls stay in the main one.
 - **Toggle the stats overlay**, off by default for normal users.
@@ -80,7 +82,7 @@ Goal: the broadcaster decides who watches. Today anyone who can reach you on the
 - **Approve / deny** new viewers with a prompt ("Bob (FD7C-A21D) wants to watch"), with "always allow" remembered per ID.
 - **Optional password** for a broadcast.
 - Viewers authenticate with their own identity (mutual TLS using the certificate every peer already has), so the ID the broadcaster sees can't be faked.
-- Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 3; audio already took 2) and keep the "incompatible version" message clear.
+- Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 4; audio took 2 and H.265 took 3) and keep the "incompatible version" message clear.
 - The approval and access controls cover audio too: today anyone who can watch a broadcast also hears it (AC-11).
 
 ## 0.7 — macOS and Linux
@@ -92,6 +94,7 @@ Goal: the same features on all three platforms, tested on real machines. Targets
 - **Linux**: run the PipeWire / xdg-desktop-portal path on Wayland (GNOME and KDE), and support X11 too (decided: both are targets). `scap` 0.0.8 only captures through the portal, so X11 needs its own capture path or a different library.
   - Known risk: the `scap` 0.0.8 Linux backend asks PipeWire for RGBA but panics if it actually receives it. Patch or replace it before calling Linux supported.
 - Cross-platform interoperability (FR-13): Windows ↔ macOS ↔ Linux sessions verified.
+- **H.265 encoding** on the GPU: VideoToolbox on macOS, VAAPI on Linux, behind the same `VideoEncoder` trait. Until then these platforms broadcast H.264; they already decode H.265.
 - **Audio capture** (0.4 capture is Windows-only; playback and everything else already builds for all three):
   - **macOS**: ScreenCaptureKit audio through the `screencapturekit` crate `scap` already pulls in. It has `captures_audio` and `excludes_current_process_audio`, and returns PCM buffers. Needs macOS 13+; macOS 12.3–12.x keeps video only, with a note. Uses the same Screen Recording permission. To verify on a real Mac: a window share gets only that window's app's sound.
   - **Linux**: audio is the same on X11 and Wayland; it depends on the sound server. Decide between:
@@ -114,6 +117,7 @@ Goal: installing and updating is easy and trustworthy.
   - Since 2024, no certificate (OV or EV) gives instant SmartScreen trust. Signed apps still build reputation as people download and run them, so early warnings may continue for a while.
   - macOS needs Apple notarization.
 - **H.264 licensing**: ship Cisco's prebuilt OpenH264 library, which the `openh264` crate can load and which is covered by Cisco's patent license, instead of compiling it from source.
+- **H.265 licensing**: H.265 has several patent pools and nothing like Cisco's free license. The GPU encoders are licensed through their makers; the libde265 decoder isn't. Look into it before distributing widely; options include decoding on the GPU through the operating system (Windows' HEVC extension, VideoToolbox, VAAPI), where the platform carries the license.
 
 ## 1.0 — Stable
 
@@ -128,9 +132,9 @@ Goal: something you can hand to anyone.
 
 Not scheduled; to be picked up when they become important.
 
-- **Hardware encoding** (NFR-03): NVENC / AMD AMF / Quick Sync / VideoToolbox behind the existing `VideoEncoder` trait. Lower CPU use, higher resolutions and frame rates.
+- **Hardware H.264 encoding**, for graphics cards with an H.264 encoder but no H.265 one, and **hardware decoding** (D3D11 video on Windows), so 1080p60 H.265 costs viewers less CPU (NFR-03). H.265 encoding on the GPU already shipped (see 0.5).
 - IPv6 support.
-- 1440p / 60 fps presets (realistic with hardware encoding).
+- 1440p presets (realistic now that H.265 is encoded on the GPU; decoding on the viewer's CPU is the limit).
 - Viewer-side recording of a stream.
 - Pointer highlighting or drawing on the shared screen.
 - Discovery across subnets and VPNs that block multicast, e.g. by sharing saved contacts.

@@ -61,8 +61,11 @@ SHARING YOUR SCREEN
 -------------------
 - Under "Broadcast", pick a Source (a monitor or a window) and a Quality,
   then click "Start broadcasting".
-- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 20 fps":
-  about 2 Mbps of upload, enough for most home connections.
+- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 24 fps":
+  at most 2 Mbps of upload, enough for most home connections.
+- The 60 fps presets need a graphics card that can encode H.265 (most
+  NVIDIA, AMD and Intel ones from about 2016 on). Without one, Peeroxide
+  uses H.264 on the processor, which may not keep up with 1080p at 60 fps.
 - To share sound, tick "Share audio" BEFORE you start. It is off by
   default and remembered. What it shares depends on the source:
     * a window:  only the sound of that window's app;
