@@ -9,7 +9,7 @@ use anyhow::{Context, bail};
 use crossbeam::channel::{Receiver, Sender, bounded};
 use peeroxide_capture::{CaptureError, CaptureOptions, CaptureStream, CloseReason, Next, Source};
 use peeroxide_codec::{Canvas, H264Encoder, Preset, VideoEncoder, canvas_size};
-use peeroxide_net::VideoFrame;
+use peeroxide_net::{VideoCodec, VideoFrame};
 
 use crate::stats::Meter;
 
@@ -231,6 +231,7 @@ fn run(
         on_packet(VideoFrame {
             seq,
             keyframe: encoded.keyframe,
+            codec: VideoCodec::H264,
             capture_time_us: wall_clock_us(captured_at),
             data: encoded.data.into(),
         });

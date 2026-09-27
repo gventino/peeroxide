@@ -5,7 +5,7 @@
 //!   then the viewer may send `RequestKeyframe`.
 //! * Media (unidirectional streams opened by the broadcaster), each starting with one
 //!   [`StreamKind`] byte:
-//!   * video: fixed 21-byte header + H.264 Annex-B, per frame;
+//!   * video: fixed 22-byte header (which says the codec) + Annex-B (H.264 or H.265), per frame;
 //!   * audio (only when shared): fixed 18-byte header + one Opus packet, per 20 ms.
 //! * Session end reasons travel as QUIC application close codes (see [`CloseCode`]).
 
@@ -15,15 +15,16 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Version 2 adds audio. The ALPN stays the same so older peers still reach the version check
-/// and report "incompatible version" instead of a handshake failure.
-pub const PROTOCOL_VERSION: u16 = 2;
+/// Version 2 added audio; version 3 adds the codec to each video frame (H.265). The ALPN stays
+/// the same so older peers still reach the version check and report "incompatible version"
+/// instead of a handshake failure.
+pub const PROTOCOL_VERSION: u16 = 3;
 pub(crate) const ALPN: &[u8] = b"peeroxide/1";
 pub(crate) const MAX_CONTROL_MSG: usize = 64 * 1024;
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 /// Far above any 20 ms Opus packet (at most 1276 bytes); checked before allocating.
 pub(crate) const MAX_AUDIO_PACKET: usize = 4 * 1024;
-const HEADER_LEN: usize = 21;
+const HEADER_LEN: usize = 22;
 const AUDIO_HEADER_LEN: usize = 18;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,16 @@ pub(crate) enum ServerMsg {
 pub(crate) enum StreamKind {
     Video = 0,
     Audio = 1,
+}
+
+/// How a video frame is encoded. Carried in every frame, so a broadcaster can switch (e.g. from
+/// H.265 to H.264 when the GPU encoder fails) and viewers follow at the next keyframe. The values
+/// are on the wire: never change them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::FromRepr)]
+#[repr(u8)]
+pub enum VideoCodec {
+    H264 = 0,
+    H265 = 1,
 }
 
 /// Why a session ended, sent as the QUIC application close code. The values are on the wire
@@ -75,6 +86,7 @@ pub struct VideoFrame {
     /// Broadcaster wall clock at capture; only comparable to the viewer's clock on the same machine.
     pub capture_time_us: u64,
     pub keyframe: bool,
+    pub codec: VideoCodec,
     pub data: Bytes,
 }
 
@@ -99,6 +111,8 @@ pub(crate) enum ProtocolError {
     Truncated,
     #[error("unknown stream kind {0}")]
     UnknownStreamKind(u8),
+    #[error("unknown video codec {0}")]
+    UnknownCodec(u8),
 }
 
 pub(crate) async fn write_msg<W, T>(w: &mut W, msg: &T) -> Result<(), ProtocolError>
@@ -148,6 +162,7 @@ where
     header[8..16].copy_from_slice(&f.capture_time_us.to_le_bytes());
     header[16] = u8::from(f.keyframe);
     header[17..21].copy_from_slice(&(f.data.len() as u32).to_le_bytes());
+    header[21] = f.codec as u8;
     w.write_all(&header).await?;
     w.write_all(&f.data).await?;
     Ok(())
@@ -165,6 +180,7 @@ where
     if len > MAX_FRAME {
         return Err(ProtocolError::TooLarge(len));
     }
+    let codec = VideoCodec::from_repr(header[21]).ok_or(ProtocolError::UnknownCodec(header[21]))?;
     let mut data = vec![0u8; len];
     if !read_exact_or_eof(r, &mut data).await? && len > 0 {
         return Err(ProtocolError::Truncated);
@@ -173,6 +189,7 @@ where
         seq: u64::from_le_bytes(header[0..8].try_into().unwrap()),
         capture_time_us: u64::from_le_bytes(header[8..16].try_into().unwrap()),
         keyframe: header[16] != 0,
+        codec,
         data: data.into(),
     }))
 }
@@ -306,20 +323,37 @@ mod tests {
     #[tokio::test]
     async fn frames_roundtrip_and_truncation_is_detected() {
         let (mut a, mut b) = tokio::io::duplex(1 << 16);
-        let f = VideoFrame {
-            seq: 42,
-            capture_time_us: 123_456,
-            keyframe: true,
-            data: Bytes::from_static(&[0, 0, 0, 1, 0x65, 1, 2, 3]),
-        };
-        write_frame(&mut a, &f).await.unwrap();
-        assert_eq!(read_frame(&mut b).await.unwrap(), Some(f));
+        for codec in [VideoCodec::H264, VideoCodec::H265] {
+            let f = VideoFrame {
+                seq: 42,
+                capture_time_us: 123_456,
+                keyframe: true,
+                codec,
+                data: Bytes::from_static(&[0, 0, 0, 1, 0x65, 1, 2, 3]),
+            };
+            write_frame(&mut a, &f).await.unwrap();
+            assert_eq!(read_frame(&mut b).await.unwrap(), Some(f));
+        }
 
         a.write_all(&[0u8; 10]).await.unwrap();
         drop(a);
         assert!(matches!(
             read_frame(&mut b).await,
             Err(ProtocolError::Truncated)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_codecs_are_rejected() {
+        let (mut a, mut b) = tokio::io::duplex(64);
+        let mut header = [0u8; HEADER_LEN];
+        header[17..21].copy_from_slice(&4u32.to_le_bytes());
+        header[21] = 7;
+        a.write_all(&header).await.unwrap();
+        a.write_all(&[0; 4]).await.unwrap();
+        assert!(matches!(
+            read_frame(&mut b).await,
+            Err(ProtocolError::UnknownCodec(7))
         ));
     }
 
@@ -386,8 +420,13 @@ mod tests {
             assert_eq!(CloseCode::from_repr(value), Some(code));
             assert_eq!(VarInt::from(code).into_inner(), u64::from(value));
         }
+        for (codec, byte) in [(VideoCodec::H264, 0), (VideoCodec::H265, 1)] {
+            assert_eq!(codec as u8, byte);
+            assert_eq!(VideoCodec::from_repr(byte), Some(codec));
+        }
         assert_eq!(StreamKind::from_repr(2), None);
         assert_eq!(CloseCode::from_repr(6), None);
+        assert_eq!(VideoCodec::from_repr(2), None);
     }
 
     #[tokio::test]
