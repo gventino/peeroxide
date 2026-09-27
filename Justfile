@@ -41,6 +41,10 @@ lint:
 test *args:
     cargo test --workspace {{ args }}
 
+# The tests CI can't run: the GPU's H.265 encoder and the timing measurements (release build)
+test-hw *args:
+    cargo test --release --workspace {{ args }} -- --ignored --nocapture --skip write_h265_fixture
+
 # Everything CI checks: formatting, clippy and tests
 check:
     cargo fmt --all --check
@@ -77,6 +81,6 @@ probe-audio *args:
 probe-capture *args:
     cargo run --release -p peeroxide-capture --example probe -- {{ args }}
 
-# H.264 encoder benchmark: `just bench [source|test|scroll] [seconds] [720|1080|internet]`
+# Encoder benchmark: `just bench [source|test|scroll] [seconds] [720|720-60|1080|1080-60|internet] [--codec h264|h265]`
 bench *args:
     cargo run --release -p peeroxide-codec --example bench -- {{ args }}
