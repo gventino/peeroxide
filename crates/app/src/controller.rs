@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Context;
 use eframe::egui;
-use peeroxide_audio::{AudioSource, OutputControl};
+use peeroxide_audio::{AudioSource, MutedApps, OutputControl};
 use peeroxide_capture::Source;
 use peeroxide_codec::{Codec, Preset};
 use peeroxide_discovery::{Discovery, Peer};
@@ -17,6 +17,7 @@ use peeroxide_net::{
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
+use crate::app_list::AppList;
 use crate::audio_decoder::{AudioReceiver, AudioReceiverStats};
 use crate::audio_encoder::{AudioPipeline, audio_source};
 use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
@@ -138,6 +139,8 @@ pub struct Controller {
     pub watching: Option<Watching>,
     discovery: Option<Discovery>,
     pub discovery_error: Option<String>,
+    /// The apps playing sound, for the "Mute apps" checklist.
+    pub audio_apps: AppList,
     generation: u64,
 }
 
@@ -158,6 +161,10 @@ impl Controller {
             ViewerClient::new()?
         };
         let (events_tx, events) = channel();
+        let audio_apps = AppList::start({
+            let ctx = ctx.clone();
+            move || ctx.request_repaint()
+        });
         let mut ctrl = Self {
             rt,
             identity,
@@ -172,6 +179,7 @@ impl Controller {
             watching: None,
             discovery: None,
             discovery_error: None,
+            audio_apps,
             generation: 0,
         };
         ctrl.start_discovery();
@@ -218,7 +226,8 @@ impl Controller {
 
     /// Starts broadcasting on `preferred_port` when it is free (a random port otherwise) and
     /// returns the port actually used. With `share_audio`, the source's audio is shared too if
-    /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why.
+    /// it can be captured; otherwise the broadcast is video-only and `audio_note` says why. A
+    /// monitor's sound leaves out the apps in `muted`, which may change while live.
     /// H.265 falls back to H.264 when there is no working GPU encoder.
     pub fn start_broadcast(
         &mut self,
@@ -227,6 +236,7 @@ impl Controller {
         codec: Codec,
         preferred_port: Option<u16>,
         share_audio: bool,
+        muted: MutedApps,
     ) -> anyhow::Result<u16> {
         self.stop_broadcast(StopReason::Stopped);
         let _guard = self.rt.enter();
@@ -285,6 +295,7 @@ impl Controller {
                 AudioPipeline::start(
                     audio_control,
                     audio_source,
+                    muted,
                     preset.audio_bitrate_bps,
                     {
                         let server = server.clone();

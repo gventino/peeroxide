@@ -4,6 +4,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use eframe::egui::{self, Color32, RichText};
+use peeroxide_audio::{AudioSource, MutedApps};
 use peeroxide_capture::{Source, SourceKind, list_sources};
 use peeroxide_codec::{Codec, Preset, hardware_h265_encoder};
 use peeroxide_discovery::Peer;
@@ -15,6 +16,7 @@ use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
 use crate::encoder::EncoderEnd;
 use crate::fullscreen;
+use crate::mute_apps;
 use crate::settings::Settings;
 use crate::video::VideoView;
 use crate::viewer_state::{PeerRef, ViewerInput, ViewerState};
@@ -35,6 +37,8 @@ pub struct App {
     codec: Codec,
     /// The GPU's H.265 encoder, if there is one.
     h265_encoder: Option<&'static str>,
+    /// Apps left out of a shared monitor's sound; shared with a running broadcast.
+    muted_apps: MutedApps,
     viewer_count: usize,
     broadcast_note: Option<String>,
     viewer: ViewerState,
@@ -80,6 +84,7 @@ impl App {
             preset: settings.preset(),
             codec: args.codec.into(),
             h265_encoder: hardware_h265_encoder(),
+            muted_apps: MutedApps::new(settings.audio_apps.clone()),
             settings,
             contacts: Contacts::load(&dir),
             watch_target: None,
@@ -223,6 +228,7 @@ impl App {
             self.codec,
             self.settings.broadcast_port,
             self.settings.share_audio,
+            self.muted_apps.clone(),
         ) {
             Ok(port) if self.settings.broadcast_port != Some(port) => {
                 self.settings.broadcast_port = Some(port);
@@ -426,9 +432,27 @@ impl App {
             });
             ui.label(format!("Sharing {}", truncate(&b.source_name, 40)));
             match &b.audio {
-                Some(a) => ui.label(format!("🔊 With audio: {}", describe_audio(&a.source))),
-                None => ui.weak("🔇 No audio"),
-            };
+                Some(a) if matches!(a.source, AudioSource::System { .. }) => {
+                    let except =
+                        mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
+                    ui.label(format!(
+                        "🔊 With audio: all sound on this computer, {except}"
+                    ));
+                    mute_apps::ui(
+                        ui,
+                        &self.ctrl.audio_apps,
+                        &self.muted_apps,
+                        &mut self.settings,
+                        &self.dir,
+                    );
+                }
+                Some(a) => {
+                    ui.label(format!("🔊 With audio: {}", describe_audio(&a.source)));
+                }
+                None => {
+                    ui.weak("🔇 No audio");
+                }
+            }
             if self.viewer_count == 0 {
                 ui.weak("Capture paused until someone watches");
             } else {
@@ -520,6 +544,15 @@ impl App {
                 .map(|c| c.to_uppercase().chain(chars).collect())
                 .unwrap_or_default();
             ui.weak(format!("{scope}. Your microphone is never shared."));
+            if matches!(audio, AudioSource::System { .. }) {
+                mute_apps::ui(
+                    ui,
+                    &self.ctrl.audio_apps,
+                    &self.muted_apps,
+                    &mut self.settings,
+                    &self.dir,
+                );
+            }
         }
     }
 
