@@ -69,10 +69,16 @@ SHARING YOUR SCREEN
 - To share sound, tick "Share audio" BEFORE you start. It is off by
   default and remembered. What it shares depends on the source:
     * a window:  only the sound of that window's app;
-    * a monitor: all sound on your PC (except Peeroxide itself), which
-                 includes voice calls and notifications;
+    * a monitor: all sound on your PC, except Peeroxide itself and the
+                 apps you mute (see below);
     * your microphone is never shared.
   To turn sound on or off, stop broadcasting and start again.
+- Sharing a monitor with sound: under "Mute apps", tick the apps your
+  viewers shouldn't hear. You still hear them. Discord, TeamSpeak and
+  other voice chat apps start ticked, so friends in a call with you don't
+  hear themselves. You can change it while broadcasting, and it's
+  remembered. While an app is muted, Windows notification sounds aren't
+  shared either.
 - Nothing is captured or sent until someone starts watching.
 
 

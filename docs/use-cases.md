@@ -181,14 +181,18 @@ stateDiagram-v2
   1. The broadcaster turns "Share audio" on. It is off by default; the choice is remembered for the next broadcast.
   2. The app states exactly what will be captured for the selected source:
      - a **window**: only the sound of that window's application (and its child processes);
-     - a **full desktop**: all sound playing on the computer, except Peeroxide's own playback;
+     - a **full desktop**: all sound playing on the computer, except Peeroxide's own playback and the applications the broadcaster mutes;
      - the microphone is **never** captured.
-  3. The broadcaster starts the broadcast (UC-02).
-  4. When the first viewer connects, the app starts capturing and encoding audio alongside the video. Like video, audio capture pauses whenever nobody is watching.
+  3. For a full desktop, the app lists the applications playing sound. The broadcaster ticks the ones viewers shouldn't hear (FR-20); voice and video chat applications start ticked, and the choices are remembered per application.
+  4. The broadcaster starts the broadcast (UC-02).
+  5. When the first viewer connects, the app starts capturing and encoding audio alongside the video. Like video, audio capture pauses whenever nobody is watching.
+- **Alternate flow — change what's muted while live:** during a full-desktop broadcast with audio, the broadcaster ticks or unticks an application. Within about a second, viewers stop or start hearing it; nothing else about the broadcast changes.
 - **Alternate flow — broadcast without audio:** The broadcaster leaves "Share audio" off. Only video is sent, and viewers are told the broadcaster isn't sharing audio.
 - **Postconditions:** Every viewer of this broadcast receives the audio of the selected source, or none if audio is off.
 - **Exceptions:** If audio capture is unavailable (unsupported OS version, no audio service), the broadcast starts video-only and the app tells the broadcaster why. An audio failure during the broadcast never stops the video.
-- **Business rule:** The audio choice is fixed for the whole broadcast. To change it, the broadcaster stops (UC-05) and starts again.
+- **Business rules:**
+  - Turning audio on or off is fixed for the whole broadcast. To change it, the broadcaster stops (UC-05) and starts again. Which applications are muted can change at any time.
+  - While any application is muted, the operating system's own notification sounds aren't shared.
 
 ```mermaid
 flowchart TD
@@ -196,7 +200,7 @@ flowchart TD
     Q -- "Off (default)" --> VO["Broadcast video only<br/>viewers see 'no audio'"]
     Q -- On --> K{"Source kind"}
     K -- Window --> W["Capture only that app's sound"]
-    K -- "Full desktop" --> D["Capture all sound<br/>except Peeroxide"]
+    K -- "Full desktop" --> D["Capture all sound<br/>except Peeroxide<br/>and muted apps"]
     W --> C{"Audio capture<br/>available?"}
     D --> C
     C -- Yes --> AV["Broadcast video + audio"]
