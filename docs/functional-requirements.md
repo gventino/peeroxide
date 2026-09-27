@@ -57,6 +57,7 @@ Each broadcaster streams independently to whichever viewers are currently connec
 | FR-18 | Fullscreen Viewing | A viewer shall be able to show the watched stream alone, filling the screen, and leave that view at any time with the keyboard or the mouse. The volume controls stay reachable in fullscreen, and fullscreen ends when the stream ends. | Medium |
 | FR-19 | Quality Presets | Before starting a broadcast, a broadcaster shall be able to choose its quality: 720p or 1080p, each at 30 or 60 frames per second, or a low-bandwidth preset for internet links (720p at 24 frames per second). The choice is remembered. | Medium |
 | FR-20 | Mute Apps in Shared Audio | When sharing a full desktop's audio, a broadcaster shall be able to pick, from the applications playing sound, which ones viewers don't hear, without muting them for the broadcaster. Voice and video chat applications start muted. The choice can be changed during the broadcast and is remembered per application. | Medium |
+| FR-21 | Mini Player | While watching, minimizing the application shall keep the stream playing in a small window that stays on top of other windows, can be moved and resized, and reopens where it was left. From it, the viewer can mute, return to the application, or stop watching. It closes when the stream ends or the application is restored. | Medium |
 
 ## Traceability Notes
 
@@ -67,4 +68,5 @@ Each broadcaster streams independently to whichever viewers are currently connec
 - FR-13 holds across codecs: H.265 is only encoded where there is a hardware encoder (Windows, for now), but it is decoded on every platform, and a broadcaster without such an encoder sends H.264, which every platform decodes too.
 - FR-19: 60 fps relies on the graphics card's H.265 encoder (NFR-02, NFR-03). Without one, a 60 fps preset uses H.264 on the CPU and may not reach 60 fps at 1080p; the UI says so.
 - FR-20 answers the most common audio leak (AC-11): friends in a voice call with the broadcaster would otherwise hear themselves through the stream. It is Windows-only like FR-14's capture; while any application is muted, the operating system's own notification sounds aren't shared.
+- FR-21 complements FR-18: fullscreen gives the stream the whole screen, the mini player keeps it in a corner while the viewer does something else. It relies on the operating system reporting a minimized window, which Wayland doesn't.
 - Current status of FR-14: audio capture exists for Windows (10 2004+ and 11) only. macOS and Linux broadcasters can't share audio yet (planned for 0.7, see the roadmap), but viewers on any platform can play audio from a Windows broadcaster, which keeps FR-13 intact.

@@ -10,6 +10,7 @@ mod decoder;
 mod encoder;
 mod fullscreen;
 mod launcher;
+mod mini_player;
 mod mute_apps;
 mod settings;
 mod stats;

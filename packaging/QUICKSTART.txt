@@ -91,6 +91,10 @@ WATCHING
   Otherwise it says "The broadcaster isn't sharing audio".
 - Fullscreen: press F11, double-click the picture, or click "Fullscreen".
   Move the mouse to show the volume and an exit button; Esc leaves.
+- Mini player: minimize Peeroxide while watching (or click "Mini player")
+  and the stream stays in a small window on top of the others. Drag it
+  anywhere; it opens there next time. Double-click it to go back to
+  Peeroxide; its X button stops watching.
 - Next to each name there is an ID like 7268-E22A. The broadcaster sees
   their own ID at the top of their window. If they match, you are watching
   the right person (the app refuses to connect if the ID is faked).

@@ -1,6 +1,7 @@
 //! Owns the networking runtime and wires capture/encode → server and client → decode.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -22,6 +23,7 @@ use crate::audio_decoder::{AudioReceiver, AudioReceiverStats};
 use crate::audio_encoder::{AudioPipeline, audio_source};
 use crate::decoder::{DecoderPipeline, DecoderStats, VideoSlot};
 use crate::encoder::{EncoderControl, EncoderEnd, EncoderPipeline};
+use crate::mini_player;
 
 pub const MAX_VIEWERS: usize = 8;
 
@@ -141,6 +143,8 @@ pub struct Controller {
     pub discovery_error: Option<String>,
     /// The apps playing sound, for the "Mute apps" checklist.
     pub audio_apps: AppList,
+    /// Whether the mini player is open, so new frames repaint it too.
+    pub mini_open: Arc<AtomicBool>,
     generation: u64,
 }
 
@@ -180,6 +184,7 @@ impl Controller {
             discovery: None,
             discovery_error: None,
             audio_apps,
+            mini_open: Arc::default(),
             generation: 0,
         };
         ctrl.start_discovery();
@@ -379,7 +384,13 @@ impl Controller {
         };
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = self.ctx.clone();
-            Arc::new(move || ctx.request_repaint())
+            let mini_open = self.mini_open.clone();
+            Arc::new(move || {
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+                if mini_open.load(Ordering::Relaxed) {
+                    ctx.request_repaint_of(mini_player::id());
+                }
+            })
         };
         let mut decoder = DecoderPipeline::start(self.video.clone(), repaint, need_keyframe);
         let decoder_stats = decoder.stats.clone();
