@@ -11,6 +11,8 @@ pub use opus::{OpusDecoder, OpusEncoder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preset {
+    /// Stable identifier, saved in the settings; never change an existing one.
+    pub id: &'static str,
     pub name: &'static str,
     pub max_width: u32,
     pub max_height: u32,
@@ -22,6 +24,7 @@ pub struct Preset {
 
 impl Preset {
     pub const P720: Self = Self {
+        id: "720p30",
         name: "720p · 30 fps",
         max_width: 1280,
         max_height: 720,
@@ -29,7 +32,17 @@ impl Preset {
         bitrate_bps: 4_000_000,
         audio_bitrate_bps: 128_000,
     };
+    pub const P720_60: Self = Self {
+        id: "720p60",
+        name: "720p · 60 fps",
+        max_width: 1280,
+        max_height: 720,
+        fps: 60,
+        bitrate_bps: 6_000_000,
+        audio_bitrate_bps: 128_000,
+    };
     pub const P1080: Self = Self {
+        id: "1080p30",
         name: "1080p · 30 fps",
         max_width: 1920,
         max_height: 1080,
@@ -37,18 +50,47 @@ impl Preset {
         bitrate_bps: 8_000_000,
         audio_bitrate_bps: 128_000,
     };
-    /// For links with limited upload, such as a virtual LAN over the internet. Rate control
-    /// raises the quantizer to stay near the budget; frames are never dropped, because a
-    /// frame-skipping encoder makes each surviving frame bigger and spirals down to ~1 fps.
+    pub const P1080_60: Self = Self {
+        id: "1080p60",
+        name: "1080p · 60 fps",
+        max_width: 1920,
+        max_height: 1080,
+        fps: 60,
+        bitrate_bps: 12_000_000,
+        audio_bitrate_bps: 128_000,
+    };
+    /// For links with limited upload, such as a virtual LAN over the internet. 24 fps is the
+    /// frame rate of films, series and anime. Rate control raises the quantizer to stay near
+    /// the budget; frames are never dropped, because a frame-skipping encoder makes each
+    /// surviving frame bigger and spirals down to ~1 fps.
     pub const INTERNET: Self = Self {
-        name: "Internet / VPN · 720p · 20 fps",
+        id: "internet",
+        name: "Internet / VPN · 720p · 24 fps",
         max_width: 1280,
         max_height: 720,
-        fps: 20,
+        fps: 24,
         bitrate_bps: 2_000_000,
         audio_bitrate_bps: 64_000,
     };
-    pub const ALL: [Self; 3] = [Self::P720, Self::P1080, Self::INTERNET];
+    pub const ALL: [Self; 5] = [
+        Self::P720,
+        Self::P720_60,
+        Self::P1080,
+        Self::P1080_60,
+        Self::INTERNET,
+    ];
+
+    /// Finds a preset by its id, or by the display name older versions saved.
+    pub fn find(key: &str) -> Option<Self> {
+        let legacy = match key {
+            "Internet / VPN · 720p · 20 fps" => Some(Self::INTERNET),
+            _ => None,
+        };
+        Self::ALL
+            .into_iter()
+            .find(|p| p.id == key || p.name == key)
+            .or(legacy)
+    }
 }
 
 impl Default for Preset {

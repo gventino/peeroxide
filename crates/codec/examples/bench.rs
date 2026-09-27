@@ -48,10 +48,16 @@ enum Quality {
     /// 720p, 30 fps
     #[value(name = "720")]
     P720,
+    /// 720p, 60 fps
+    #[value(name = "720-60")]
+    P720_60,
     /// 1080p, 30 fps
     #[value(name = "1080")]
     P1080,
-    /// 720p, 20 fps, for links with limited upload
+    /// 1080p, 60 fps
+    #[value(name = "1080-60")]
+    P1080_60,
+    /// 720p, 24 fps, for links with limited upload
     Internet,
 }
 
@@ -59,7 +65,9 @@ impl Quality {
     fn preset(self) -> Preset {
         match self {
             Self::P720 => Preset::P720,
+            Self::P720_60 => Preset::P720_60,
             Self::P1080 => Preset::P1080,
+            Self::P1080_60 => Preset::P1080_60,
             Self::Internet => Preset::INTERNET,
         }
     }

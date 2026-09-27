@@ -399,7 +399,7 @@ impl App {
                     }
                 });
             if self.preset != before {
-                self.settings.preset = Some(self.preset.name.into());
+                self.settings.preset = Some(self.preset.id.into());
                 self.save_settings();
             }
             if !live {

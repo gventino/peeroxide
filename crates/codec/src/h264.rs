@@ -167,6 +167,7 @@ mod tests {
 
     fn encoder() -> H264Encoder {
         H264Encoder::new(&Preset {
+            id: "test",
             name: "test",
             max_width: W,
             max_height: H,

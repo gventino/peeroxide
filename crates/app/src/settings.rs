@@ -11,6 +11,7 @@ const FILE: &str = "settings.toml";
 #[serde(default)]
 pub struct Settings {
     pub display_name: Option<String>,
+    /// The quality preset's id (versions up to 0.5 saved its display name, which still loads).
     pub preset: Option<String>,
     /// Reused on every broadcast so connect strings and saved contacts stay valid.
     pub broadcast_port: Option<u16>,
@@ -45,7 +46,7 @@ impl Settings {
     pub fn preset(&self) -> Preset {
         self.preset
             .as_deref()
-            .and_then(|name| Preset::ALL.into_iter().find(|p| p.name == name))
+            .and_then(Preset::find)
             .unwrap_or_default()
     }
 }
@@ -61,7 +62,7 @@ mod tests {
 
         let s = Settings {
             display_name: Some("Ana".into()),
-            preset: Some(Preset::P720.name.into()),
+            preset: Some(Preset::P720.id.into()),
             broadcast_port: Some(50123),
             share_audio: true,
             volume: Some(40),
@@ -95,6 +96,33 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(loud.volume(), 1.0);
+    }
+
+    /// Older versions saved the display name; the Internet preset was renamed from 20 to 24 fps.
+    #[test]
+    fn presets_saved_by_older_versions_still_load() {
+        for (saved, preset) in [
+            ("Internet / VPN · 720p · 20 fps", Preset::INTERNET),
+            ("720p · 30 fps", Preset::P720),
+            ("1080p · 30 fps", Preset::P1080),
+        ] {
+            let s = Settings {
+                preset: Some(saved.into()),
+                ..Default::default()
+            };
+            assert_eq!(s.preset(), preset, "{saved}");
+        }
+    }
+
+    #[test]
+    fn every_preset_roundtrips_by_id() {
+        for preset in Preset::ALL {
+            let s = Settings {
+                preset: Some(preset.id.into()),
+                ..Default::default()
+            };
+            assert_eq!(s.preset(), preset);
+        }
     }
 
     #[test]
