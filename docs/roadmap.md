@@ -1,15 +1,16 @@
 # Roadmap
 
-Where Peeroxide stands after **0.5.0 (pre-alpha)**, and what comes next. Audio, first planned as 0.6, shipped in 0.4.0, so the fixes and privacy milestones each moved up one number. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.6.0 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
-    V04["0.4 ✓<br/>Audio"] --> B["Known bugs"]
-    B --> V05["0.5<br/>Fixes + better viewer<br/>+ self-update + H.265"]
-    V05 --> V06["0.6<br/>Privacy controls"]
-    V06 --> V07["0.7<br/>macOS + Linux"]
-    V07 --> V08["0.8<br/>Distribution"]
-    V08 --> V10["1.0<br/>Stable"]
+    V04["0.4 ✓<br/>Audio"] --> V05["0.5 ✓<br/>Self-update<br/>+ fullscreen"]
+    V05 --> V06["0.6 ✓<br/>H.265 + 60 fps<br/>+ mute apps + mini player"]
+    V06 --> B["Known bugs<br/>+ better viewer"]
+    B --> V07["0.7<br/>Privacy controls"]
+    V07 --> V08["0.8<br/>macOS + Linux"]
+    V08 --> V09["0.9<br/>Distribution"]
+    V09 --> V10["1.0<br/>Stable"]
 ```
 
 ## Known bugs
@@ -38,9 +39,9 @@ These pass automated tests, but nobody has clicked through them yet:
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
-- H.265 (built after 0.5.0): between two PCs on a LAN at 1080p60; the Internet / VPN preset (24 fps) over Radmin VPN; NVIDIA and Intel graphics; and a PC without a hardware H.265 encoder falling back to H.264 by itself. Checked so far: the AMD encoder (RX 6600) with the viewer on the same PC, and the fallback forced with `--codec h264`.
-- Mini player (built after 0.5.0): the resize grip and the mute button by hand; a second monitor; display scaling other than 100%; a viewer on another PC. Checked so far with two instances on one PC and synthetic input: showing on minimize, dragging, double-click back, the remembered position, stop, and closing when the stream ends.
-- Muting apps (built after 0.5.0): Discord or TeamSpeak muted in a real call, with the friends in the call watching; the mixed sound over time (hours) and with many apps playing. Checked so far: the audio probe with two tones from two processes (each muted alone, both, and unmuted live), and the checklist in the app with a viewer on the same PC.
+- H.265 (0.6.0): between two PCs on a LAN at 1080p60; the Internet / VPN preset (24 fps) over Radmin VPN; NVIDIA and Intel graphics; and a PC without a hardware H.265 encoder falling back to H.264 by itself. Checked so far: the AMD encoder (RX 6600) with the viewer on the same PC, and the fallback forced with `--codec h264`.
+- Mini player (0.6.0): the resize grip and the mute button by hand; a second monitor; display scaling other than 100%; a viewer on another PC. Checked so far with two instances on one PC and synthetic input: showing on minimize, dragging, double-click back, the remembered position, stop, and closing when the stream ends.
+- Muting apps (0.6.0): Discord or TeamSpeak muted in a real call, with the friends in the call watching; the mixed sound over time (hours) and with many apps playing. Checked so far: the audio probe with two tones from two processes (each muted alone, both, and unmuted live), and the checklist in the app with a viewer on the same PC.
 - Audio on Windows 10 (only tested on Windows 11). Per-app capture is expected to work from 2004 (build 19041); Microsoft only documents it from build 20348.
 - Audio, item by item: the test tone matching the flashing square; volume and mute; sharing a browser window (only its sound); sharing a monitor while also watching someone (no feedback); a session over Radmin VPN. Checked so far: audio between two PCs on a LAN (by hand, before the 0.4.0 release), the whole pipeline on one machine (A/V offset about +55–64 ms, no underruns), the "not sharing audio" notice, and system loopback capture.
 
@@ -55,29 +56,36 @@ Goal: hear what the broadcaster hears. Released as 0.4.0, ahead of the fixes and
 - ✅ Protocol version 2. 0.3 peers get "incompatible version".
 - Known gaps:
   - Windows Store (UWP) windows share no sound: their window belongs to `ApplicationFrameHost.exe`, not the app. Detect that and say so, or look up the app's real process.
-  - No mute-everything while live. The user chose to fix the audio on/off choice for a broadcast; revisit if needed (AC-11). Muting single apps works live since the "Mute apps" checklist (see 0.5).
+  - No mute-everything while live. The user chose to fix the audio on/off choice for a broadcast; revisit if needed (AC-11). Muting single apps works live since the "Mute apps" checklist (see 0.6).
   - Audio plays about 60 ms after the video when the video path is very fast (test pattern). That is within NFR-13, but could shrink with 10 ms Opus frames or an adaptive jitter margin.
   - Audio packets travel on a reliable stream. Over lossy internet links, QUIC datagrams with Opus loss concealment would avoid retransmission stalls.
 
-## 0.5 — Fixes and a better viewer
+## 0.5 — Fixes and a better viewer · released
 
 Goal: a solid Windows build that is pleasant to watch, and that keeps itself up to date.
 
-**0.5.0 released** with the self-update, the Windows app details, fullscreen, and much lower CPU use when sharing a window (see Performance in the README). Everyone installs it by hand once. The rest of this milestone follows in later 0.5 releases, which arrive through the updater.
+**0.5.0 released** with the self-update, the Windows app details, fullscreen, and much lower CPU use when sharing a window (see Performance in the README). Everyone installs it by hand once. What isn't built yet below follows in later releases, which arrive through the updater.
 
-- **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from 0.8, where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
+- **Self-update on start (FR-17, UC-09) · built.** Like Discord or Steam: the app checks GitHub Releases, downloads a newer version with progress and Skip, verifies its minisign signature against the key built into the app (AC-12, NFR-15), replaces itself and restarts. It fails open (NFR-14). Brought forward from the distribution milestone (then 0.8, now 0.9), where it was only planned as a notification. The release key exists (ID `1FAB31191B660C70`, public key in `crates/update/release-key.pub`; see [releasing.md](releasing.md)). Everyone installs 0.5.0 by hand once; later versions arrive by themselves.
 - **The exe looks like a real Windows app · built.** The Peeroxide icon (pixel-art pier) in Explorer, the taskbar and the window; version details in Properties and Task Manager ("Peeroxide", © Peeroxide contributors). Plus the "Unblock" tip for the SmartScreen warning in the quickstart, README and release notes.
 - All known bugs above fixed, and CI green on Windows.
 - **Fullscreen viewer · built.** F11, a double-click on the video or the Fullscreen button toggle it, and Esc leaves. A bar with the name, mute, volume and exit appears when the mouse moves and hides with the cursor. It ends by itself when the stream does (FR-18, UC-10).
-- **Mini player (FR-21, UC-11) · built.** Like Discord's picture-in-picture: minimizing Peeroxide while watching (or "🗗 Mini player") keeps the stream in a small window on top of the others. It can be dragged and resized, reopens where it was left, and has mute, back to Peeroxide and stop watching. A deferred egui viewport, pre-created hidden and revealed from `App::logic`, because eframe runs no ui pass for a minimized window. Needs a release after 0.5.0, like H.265 and muting apps.
-- **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves. Needs a release after 0.5.0 (see releasing.md).
-- **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change. Needs a release after 0.5.0, like H.265.
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
 - **Pop-out window**: watch the stream in its own window while the controls stay in the main one. The mini player covers the minimized case; this would be a normal, decorated window next to a visible main one.
 - **Toggle the stats overlay**, off by default for normal users.
 - Show the broadcaster's name and ID on the video while watching.
 
-## 0.6 — Privacy controls (AC-02)
+## 0.6 — H.265, muting apps and the mini player · released
+
+Goal: a sharper stream for less, sound without the echo of a voice call, and a stream that keeps playing in a corner.
+
+**0.6.0 released** with the three items below. It changes the protocol (version 3), so 0.5 and 0.4 peers get "incompatible version"; 0.5 installs update themselves when they start.
+
+- **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves.md).
+- **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change.265.
+- **Mini player (FR-21, UC-11) · built.** Like Discord's picture-in-picture: minimizing Peeroxide while watching (or "🗗 Mini player") keeps the stream in a small window on top of the others. It can be dragged and resized, reopens where it was left, and has mute, back to Peeroxide and stop watching. A deferred egui viewport, pre-created hidden and revealed from `App::logic`, because eframe runs no ui pass for a minimized window.265 and muting apps.
+
+## 0.7 — Privacy controls (AC-02)
 
 Goal: the broadcaster decides who watches. Today anyone who can reach you on the network can watch while you broadcast.
 
@@ -89,7 +97,7 @@ Goal: the broadcaster decides who watches. Today anyone who can reach you on the
 - Protocol change: viewers wait for approval before video starts. Bump the protocol version (to 4; audio took 2 and H.265 took 3) and keep the "incompatible version" message clear.
 - The approval and access controls cover audio too: today anyone who can watch a broadcast also hears it (AC-11).
 
-## 0.7 — macOS and Linux
+## 0.8 — macOS and Linux
 
 Goal: the same features on all three platforms, tested on real machines. Targets: Windows 10 and 11, macOS, and Linux on both X11 and Wayland.
 
@@ -108,12 +116,12 @@ Goal: the same features on all three platforms, tested on real machines. Targets
   - **Linux window shares**: on Wayland the portal doesn't say which window was picked, so the window's app can't be found. Share all sound except Peeroxide, labelled as such, or add a "which app's sound?" picker.
   - Needs real machines: none of this can be tested from the Windows development PC. CI (after BUG-01) covers compiling and unit tests only.
 
-## 0.8 — Distribution
+## 0.9 — Distribution
 
 Goal: installing and updating is easy and trustworthy.
 
 - **Release builds in CI**: a GitHub Actions workflow builds, zips and attaches the binaries to a GitHub release when a tag is pushed. It also enables NASM, so OpenH264 uses its optimized assembly, which local builds without NASM don't.
-- **Installer** for Windows (MSI or a setup `.exe`) with Start-menu shortcut and uninstall. Packages for macOS (`.dmg`) and Linux (AppImage or Flatpak) once 0.7 lands.
+- **Installer** for Windows (MSI or a setup `.exe`) with Start-menu shortcut and uninstall. Packages for macOS (`.dmg`) and Linux (AppImage or Flatpak) once 0.8 lands.
 - **Updates**: the Windows self-update shipped early (see 0.5). Here: update packages for macOS (`.app`) and Linux, and signing releases in CI with the key stored as a secret, if CI builds the releases.
 - **Code signing** so Windows stops showing the SmartScreen warning. Until then, the "Unblock" tip and the self-update keep it to one warning per tester. Options, as of 2026-09:
   - **Azure Artifact Signing** (Microsoft, ~US$10/month): only for individuals in the US or Canada, so not available to this project as it stands.
@@ -137,7 +145,7 @@ Goal: something you can hand to anyone.
 
 Not scheduled; to be picked up when they become important.
 
-- **Hardware H.264 encoding**, for graphics cards with an H.264 encoder but no H.265 one, and **hardware decoding** (D3D11 video on Windows), so 1080p60 H.265 costs viewers less CPU (NFR-03). H.265 encoding on the GPU already shipped (see 0.5).
+- **Hardware H.264 encoding**, for graphics cards with an H.264 encoder but no H.265 one, and **hardware decoding** (D3D11 video on Windows), so 1080p60 H.265 costs viewers less CPU (NFR-03). H.265 encoding on the GPU already shipped (see 0.6).
 - IPv6 support.
 - 1440p presets (realistic now that H.265 is encoded on the GPU; decoding on the viewer's CPU is the limit).
 - Viewer-side recording of a stream.

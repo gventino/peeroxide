@@ -1,5 +1,5 @@
 //! No hardware H.265 encoder is wired up on this platform yet (VideoToolbox and VAAPI are planned
-//! for 0.7), so broadcasts use H.264. Decoding H.265 works everywhere.
+//! for 0.8), so broadcasts use H.264. Decoding H.265 works everywhere.
 
 use crate::{Codec, EncodedFrame, Preset, VideoEncoder};
 

@@ -10,9 +10,9 @@ Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the 
 
 **Status: MVP.** Video, plus optional audio. Sharing audio needs a Windows broadcaster (Windows 10 2004+ or 11); playback is built for every platform. Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
 
-Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.7 (see the [roadmap](docs/roadmap.md)).
+Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.8 (see the [roadmap](docs/roadmap.md)).
 
-H.265 changed the protocol (version 3), so this version can't talk to 0.5 or 0.4: both sides show "incompatible version". From 0.5 on the app updates itself when it starts, so a group stays on the same version. 0.5 and 0.4 work together. Earlier releases couldn't talk to the one before: 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
+0.6 changed the protocol for H.265 (version 3), so it can't talk to 0.5 or 0.4: both sides show "incompatible version". Since 0.5 the app updates itself when it starts, so 0.5 installs become 0.6 on their own and a group stays on the same version. 0.5 and 0.4 worked together. Earlier releases couldn't talk to the one before either: 0.4 added audio and can't talk to 0.3 (both sides show "incompatible version"). 0.3 can't talk to 0.2 or earlier (released as "P2P Screen Share"), because the protocol and discovery names changed with the rename.
 
 Design documents: [functional requirements](docs/functional-requirements.md) · [non-functional requirements](docs/non-functional-requirements.md) · [use cases](docs/use-cases.md) · [abuse cases (STRIDE)](docs/abuse-cases.md) · [roadmap](docs/roadmap.md) · [releasing](docs/releasing.md)
 
@@ -115,7 +115,7 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 
 `.cargo/config.toml` links the C runtime statically, and release builds use the Windows GUI subsystem (no console window), so `target/release/peeroxide.exe` runs on any Windows 10 (2004+) or 11 PC with no extra installs. The exe carries the Peeroxide icon (`assets/`) and version details (Properties → Details, Task Manager), embedded by `crates/app/build.rs`.
 
-**"Windows protected your PC".** The binary isn't code-signed, so Microsoft Defender SmartScreen warns the first time someone runs a downloaded copy. It only warns about files carrying Windows' "downloaded from the internet" mark. Testers can either click More info → Run anyway, or clear the mark first: right-click the zip (or the exe) → Properties → tick **Unblock** → OK. Updates installed by the app itself carry no mark, so the warning only ever appears on the first manual install. Removing it for good needs code signing (see the [roadmap](docs/roadmap.md), 0.8).
+**"Windows protected your PC".** The binary isn't code-signed, so Microsoft Defender SmartScreen warns the first time someone runs a downloaded copy. It only warns about files carrying Windows' "downloaded from the internet" mark. Testers can either click More info → Run anyway, or clear the mark first: right-click the zip (or the exe) → Properties → tick **Unblock** → OK. Updates installed by the app itself carry no mark, so the warning only ever appears on the first manual install. Removing it for good needs code signing (see the [roadmap](docs/roadmap.md), 0.9).
 
 ## Architecture
 
@@ -264,9 +264,9 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 
 - **macOS and Linux are untested.** On macOS, grant Screen Recording permission (System Settings → Privacy & Security) and restart the app. On Linux/Wayland the source is chosen in the system's screen-share dialog.
 - IPv4 only.
-- H.265 is only encoded on Windows, by the graphics card (tested on AMD; NVIDIA and Intel not yet). Elsewhere, and without such an encoder, broadcasts use H.264 on the CPU, where 1080p at 60 fps may not keep up. VideoToolbox (macOS) and VAAPI (Linux) are planned for 0.7.
+- H.265 is only encoded on Windows, by the graphics card (tested on AMD; NVIDIA and Intel not yet). Elsewhere, and without such an encoder, broadcasts use H.264 on the CPU, where 1080p at 60 fps may not keep up. VideoToolbox (macOS) and VAAPI (Linux) are planned for 0.8.
 - H.265 is decoded on the CPU, on one thread (libde265): 8–9 ms per 1080p frame on the development PC, fine for 60 fps there, but a slower PC may not keep up with 1080p60.
-- Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.7. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
+- Audio can only be shared from Windows (10 2004 or later, or 11) for now; macOS and Linux capture is planned for 0.8. Playback is built for all three but has only been tested on Windows. Audio on Windows 10 has not been tested yet either.
 - Windows Store (UWP) apps: their windows belong to `ApplicationFrameHost.exe`, so sharing such a window shares none of its sound. Share the monitor instead.
 - The mini player opens on the main monitor's area (it remembers a position only if it's still on that monitor). It has mute but no volume slider. On Linux with Wayland, the system doesn't report minimized windows, so it doesn't appear there (like the rest of Linux, untested).
 - Audio is turned on or off before a broadcast starts; there is no mute-everything while live. Muting single apps works live.
