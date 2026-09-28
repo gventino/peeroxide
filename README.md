@@ -43,7 +43,7 @@ Every time it opens, Peeroxide checks for a newer version, like Discord or Steam
 - **It never gets in the way.** Offline, or GitHub unreachable: the app opens within about 5 seconds with a quiet note. Any error leaves the installed version as it was.
 - **Same folder, same permissions.** The firewall permission you gave keeps working after an update.
 - **A folder it can't write to** (such as Program Files): a note offers the download page instead.
-- **Only Windows packages are published for now.** On macOS and Linux the app just opens.
+- **Windows and Linux (x64) packages are published.** On macOS the app just opens.
 - **To turn it off:** start with `--no-update`, or set the environment variable `PEEROXIDE_NO_UPDATE=1` (`0`, `false`, `off` or `no` leave the check on). Development builds (`cargo run`) never update themselves.
 - **Privacy:** the check tells GitHub your IP address and the app version, nothing else (AC-13).
 - The first version with the updater has to be installed by hand once; later ones arrive by themselves.
