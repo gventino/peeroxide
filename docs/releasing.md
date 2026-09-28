@@ -48,7 +48,7 @@ Each release also gets a Linux package, built on a Linux machine from the same c
 2. Smoke test it, and optionally test the update with `just serve-release dist/peeroxide-X.Y.Z-linux-x64.zip`.
 3. **`just publish notes.md`** on Linux: if the release already exists (published from Windows), it only **adds** the zip and signature to it; add a Linux line to the release notes and the checksums (`sha256sum <file>`) by hand on the release page. If it doesn't exist yet, it creates it.
 
-Linux copies update themselves only from releases that have a `linux-x64` package, so publish one with every release. Linux builds before the 0.6.0 Linux package don't update.
+Linux copies update themselves only from releases that have a `linux-x64` package, so publish one with every release. 0.6.1 is the first release with a Linux package; Linux copies built from older versions never update.
 
 ## What the updater looks for
 
