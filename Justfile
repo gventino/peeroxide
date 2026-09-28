@@ -1,5 +1,5 @@
 # Peeroxide development commands. Run `just` to list them.
-# Install just with `cargo install just` (or `winget install Casey.Just`, or your package manager).
+# Install just with `cargo install just` (or `winget install Casey.Just`, `pacman -S just`, or your package manager).
 
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
@@ -60,6 +60,21 @@ release:
 package label="": release
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/package-windows.ps1 {{ if label == "" { "" } else { "-Label " + label } }}
 
+# Release build in a Debian container (runs on most distros): target/linux-portable/release/peeroxide
+[linux]
+release-portable:
+    docker build --network host -q -t peeroxide-linux-build -f packaging/Dockerfile.linux packaging
+    mkdir -p "$HOME/.cargo/registry"
+    docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD:/src" -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -w /src \
+        -e CARGO_TARGET_DIR=/src/target/linux-portable \
+        peeroxide-linux-build cargo build --release --locked -p peeroxide
+
+# Portable release build zipped with the quickstart and signed into dist/, e.g. `just package` or `just package test-label`
+[linux]
+package label="": release-portable
+    PEEROXIDE_EXE=target/linux-portable/release/peeroxide bash packaging/package-linux.sh {{ label }}
+
 # One-time: create the release signing key (asks for a password) and build its public key into the app
 release-keygen:
     cargo run -q --release -p peeroxide-update --example release-sign -- keygen
@@ -69,7 +84,12 @@ release-keygen:
 publish notes tag="":
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/publish-windows.ps1 -Notes '{{ notes }}' {{ if tag == "" { "" } else { "-Tag " + tag } }}
 
-# Serve a packaged release on this PC to test the self-update: `just serve-release dist/peeroxide-X.Y.Z-windows-x64.zip`
+# Publish the packaged release to GitHub (tag already pushed), or add it to an existing release: `just publish notes.md [tag]`
+[linux]
+publish notes tag="":
+    bash packaging/publish-linux.sh '{{ notes }}' {{ tag }}
+
+# Serve a packaged release on this PC to test the self-update: `just serve-release dist/peeroxide-X.Y.Z-<platform>.zip`
 serve-release zip port="8765":
     cargo run -q --release -p peeroxide-update --example serve-release -- {{ zip }} {{ port }}
 

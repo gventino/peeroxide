@@ -1,0 +1,68 @@
+{title}
+{underline}
+
+Share your screen (or a single window) with friends on the same network,
+including virtual LANs such as Radmin VPN or Hamachi.
+
+Requirements: 64-bit Linux with X11 or Wayland, PipeWire and
+xdg-desktop-portal (screen capture), ALSA or PipeWire (sound). No
+installation. Linux builds are new and barely tested: please report what
+doesn't work.
+Build: {commit}
+
+
+FIRST RUN
+---------
+1. Unzip anywhere you can write to (e.g. ~/Apps/peeroxide) and run
+   ./peeroxide from that folder.
+2. If you use a firewall (ufw, firewalld), allow Peeroxide on your LAN or
+   VPN interface, or nobody can connect to you or see you in the list.
+
+
+UPDATES
+-------
+- Every time you open Peeroxide it checks for a new version. If there is
+  one, it downloads it, installs it in the same folder and restarts by
+  itself. Click "Skip" to open right away instead.
+- Only updates signed by the Peeroxide publisher are installed.
+- In a folder you can't write to (e.g. /opt), it offers the download page
+  instead. Start with --no-update to turn the check off.
+
+
+SHARING YOUR SCREEN
+-------------------
+- Under "Broadcast", pick a Quality and click "Start broadcasting". On
+  Wayland the system's screen-share dialog asks which monitor or window.
+- Over Radmin VPN / Hamachi, choose "Internet / VPN - 720p - 24 fps".
+- Broadcasts use H.264 on the processor; 1080p at 60 fps may not keep up.
+- Sharing sound is only possible from Windows for now. You can hear
+  broadcasts that share sound.
+- Nothing is captured or sent until someone starts watching.
+
+
+WATCHING
+--------
+- People who are broadcasting appear under "Broadcasting on this network".
+  Click a name to watch; click another name to switch.
+- Fullscreen: press F11, double-click the picture, or click "Fullscreen".
+  Esc leaves.
+- Next to each name there is an ID like 7268-E22A. The broadcaster sees
+  their own ID at the top of their window. If they match, you are watching
+  the right person (the app refuses to connect if the ID is faked).
+
+
+IF SOMEONE NEVER SHOWS UP
+-------------------------
+Connect manually once; they are saved from then on.
+1. The broadcaster clicks "Copy connect string" and picks the entry for the
+   network you share.
+2. They send you that text; you open "Connect manually", paste it, and
+   click Watch.
+
+
+GOOD TO KNOW
+------------
+- Anyone who can reach you on the network can watch while you broadcast.
+  Stop broadcasting when you're done.
+- Settings, your ID, saved people and logs are stored in:
+  ~/.local/share/peeroxide

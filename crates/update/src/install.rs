@@ -54,6 +54,13 @@ pub fn extract_exe(zip_path: &Path, dest: &Path) -> Result<(), UpdateError> {
     if written > EXE_LIMIT {
         return Err(UpdateError::TooLarge);
     }
+    // Zip entries don't reliably carry the exec bit, and a new file doesn't have it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        out.set_permissions(std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| writable_error(&e))?;
+    }
     Ok(())
 }
 
@@ -149,6 +156,19 @@ pub(crate) mod tests {
             (&exe, b"new exe"),
         ]);
         assert_eq!(r.unwrap(), b"new exe");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_extracted_executable_can_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let zip = dir.path().join("p.zip");
+        std::fs::write(&zip, zip_with(&[(EXE_NAME, b"new exe")])).unwrap();
+        let dest = dir.path().join("out");
+        extract_exe(&zip, &dest).unwrap();
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
     }
 
     #[test]

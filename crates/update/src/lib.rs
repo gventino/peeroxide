@@ -30,6 +30,8 @@ pub const RELEASES_API: &str = "https://api.github.com/repos/gventino/peeroxide/
 /// are published yet.
 pub const PLATFORM: Option<&str> = if cfg!(all(windows, target_arch = "x86_64")) {
     Some("windows-x64")
+} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some("linux-x64")
 } else {
     None
 };

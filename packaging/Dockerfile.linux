@@ -1,0 +1,9 @@
+# Build environment for the Linux release (`just package` on Linux). Debian bookworm's glibc
+# (2.36) and PipeWire headers keep the binary runnable on most distributions, and avoid bindgen
+# breakage against very new PipeWire headers (libspa 0.8 fails on PipeWire 1.6).
+FROM rust:1-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config nasm libclang-dev \
+        libpipewire-0.3-dev libdbus-1-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev \
+        libasound2-dev \
+    && rm -rf /var/lib/apt/lists/*
