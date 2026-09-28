@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Peeroxide stands after **0.6.0 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.6.1 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
@@ -80,6 +80,8 @@ Goal: a solid Windows build that is pleasant to watch, and that keeps itself up 
 Goal: a sharper stream for less, sound without the echo of a voice call, and a stream that keeps playing in a corner.
 
 **0.6.0 released** with the three items below. It changes the protocol (version 3), so 0.5 and 0.4 peers get "incompatible version"; 0.5 installs update themselves when they start.
+
+**0.6.1** adds the first Linux package (`linux-x64`, built in a Debian container, glibc 2.35+), signed, and turns on the self-update for it. Nothing changes on Windows. Linux still counts as untested (see 0.8): so far it has only been started on Arch (Hyprland, Wayland).
 
 - **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves.md).
 - **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change.265.

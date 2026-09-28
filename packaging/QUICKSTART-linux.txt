@@ -11,6 +11,11 @@ doesn't work.
 Build: {commit}
 
 
+NEW IN 0.6.1
+------------
+- The first Linux package. It updates itself from now on.
+
+
 FIRST RUN
 ---------
 1. Unzip anywhere you can write to (e.g. ~/Apps/peeroxide) and run

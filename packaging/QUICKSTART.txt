@@ -9,6 +9,11 @@ Requirements: Windows 10 version 2004 or newer, or Windows 11. No installation.
 Build: {commit}
 
 
+NEW IN 0.6.1
+------------
+- Nothing changes on Windows: this version adds a Linux package.
+
+
 NEW IN 0.6
 ----------
 - Sharper video with less CPU: if your graphics card can encode H.265

@@ -8,7 +8,7 @@
 
 Peer-to-peer screen sharing for a local network, written in Rust. Anyone on the LAN can broadcast a monitor or a single window, several people can broadcast at the same time, and each viewer watches one stream at a time. There is no server: peers find each other with mDNS and stream directly over encrypted QUIC.
 
-**Status: MVP.** Video, plus optional audio. Sharing audio needs a Windows broadcaster (Windows 10 2004+ or 11); playback is built for every platform. Verified on Windows 11. macOS and Linux code paths exist but have not been run yet.
+**Status: MVP.** Video, plus optional audio. Sharing audio needs a Windows broadcaster (Windows 10 2004+ or 11); playback is built for every platform. Verified on Windows 11. macOS and Linux code paths exist but are untested; since 0.6.1 a Linux x64 package is published, and it has only been started on Arch (Hyprland, Wayland) so far.
 
 Target platforms: Windows 10 and 11, macOS, and Linux on both X11 and Wayland. Windows comes first; macOS and Linux follow in 0.8 (see the [roadmap](docs/roadmap.md)).
 
