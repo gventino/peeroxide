@@ -170,8 +170,15 @@ pub fn list_sources() -> Result<Vec<Source>, CaptureError> {
 ///
 /// The test pattern is drawn in-process. Everything else waits up to 400 ms for the first
 /// frame of a capture started at 1 fps. A window that cannot be captured (exclusive fullscreen,
-/// a closed window) returns an error; the caller shows the name without a picture.
+/// a closed window) returns an error; the caller shows the name without a picture. So does the
+/// Wayland portal source, whose capture would open the portal's dialog just for a picture.
 pub fn snapshot(source: &Source) -> Result<Frame, CaptureError> {
+    #[cfg(not(windows))]
+    if matches!(source.target, Target::Scap(None)) {
+        return Err(CaptureError::Backend(
+            "the portal source is chosen when the broadcast starts".to_string(),
+        ));
+    }
     let frame = if source.kind == SourceKind::TestPattern {
         test_pattern::still()
     } else {

@@ -228,7 +228,10 @@ fn run(
                     Canvas::new(w, h)
                 });
                 canvas.draw(&frame.data, frame.width, frame.height)?;
-                if last_preview.elapsed() >= Duration::from_millis(250) {
+                // Only once the well took the last copy: a hidden well costs no downscale.
+                if last_preview.elapsed() >= Duration::from_millis(250)
+                    && preview.lock().unwrap().is_none()
+                {
                     publish_preview(preview, canvas);
                     last_preview = Instant::now();
                 }
@@ -288,7 +291,8 @@ fn run(
     }
 }
 
-/// Keeps a copy at most 480 px wide. The encoder already drew this picture; nothing new is captured.
+/// Keeps an opaque copy at most 480 px wide, as viewers see it. The encoder already drew this
+/// picture; nothing new is captured.
 fn publish_preview(slot: &Mutex<Option<PreviewFrame>>, canvas: &Canvas) {
     let Some(small) =
         peeroxide_capture::downscale_bgra(canvas.width(), canvas.height(), canvas.bgra(), 480)
@@ -298,6 +302,7 @@ fn publish_preview(slot: &Mutex<Option<PreviewFrame>>, canvas: &Canvas) {
     let mut rgba = small.data;
     for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
+        pixel[3] = 255;
     }
     *slot.lock().unwrap() = Some(PreviewFrame {
         width: small.width as usize,

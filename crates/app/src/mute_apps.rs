@@ -1,5 +1,6 @@
 //! The "Mute apps" dropdown: which apps a shared monitor's sound leaves out. It sits in the
-//! source picker, above Quality. Changes apply within a second and are remembered per app.
+//! source picker, above Quality, and under the live line while a monitor's sound is shared.
+//! Changes apply within a second and are remembered per app.
 
 use std::collections::BTreeMap;
 use std::path::Path;

@@ -1479,6 +1479,7 @@ dependencies = [
  "ahash",
  "egui",
  "enum-map",
+ "image",
  "itertools 0.15.0",
  "log",
  "mime_guess2",

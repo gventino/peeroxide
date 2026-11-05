@@ -75,8 +75,6 @@ pub struct App {
     /// The source picker is open.
     picker: bool,
     thumbs: Thumbnails,
-    /// The picker capture has been started for this run.
-    thumbs_started: bool,
     /// Last copy of a frame this machine already captured, shown in the well while broadcasting.
     preview: Option<TextureHandle>,
 }
@@ -101,6 +99,7 @@ impl App {
     ) -> anyhow::Result<Self> {
         theme::install_fonts(&ctx);
         egui_extras::install_image_loaders(&ctx);
+        let thumbs = Thumbnails::new(ctx.clone());
         let ctrl = Controller::new(identity, display_name, ctx)?;
         let video = Arc::new(Mutex::new(VideoView::default()));
         let mini = mini_player::Shared::new(video.clone(), ctrl.video.clone(), ctrl.output.clone());
@@ -136,8 +135,7 @@ impl App {
             fullscreen_exit: false,
             fullscreen_since: None,
             picker: false,
-            thumbs: Thumbnails::new(),
-            thumbs_started: false,
+            thumbs,
             preview: None,
         };
         app.ctrl.output.set_volume(app.settings.volume());
@@ -169,20 +167,22 @@ impl App {
         self.update_note = Some(note);
     }
 
+    /// Laid out right to left, so the parts are added last to first.
     fn update_note_ui(&mut self, ui: &mut egui::Ui) {
         let Some(note) = &self.update_note else {
             return;
         };
-        ui.separator();
+        let dismiss = ui.small_button("×").on_hover_text("Dismiss").clicked();
+        if let Some(link) = &note.link {
+            ui.hyperlink_to("Download", link);
+        }
         if note.warn {
             ui.colored_label(ui.visuals().warn_fg_color, &note.text);
         } else {
             ui.weak(&note.text);
         }
-        if let Some(link) = &note.link {
-            ui.hyperlink_to("Download", link);
-        }
-        if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+        ui.separator();
+        if dismiss {
             self.update_note = None;
         }
     }
@@ -204,7 +204,8 @@ impl App {
                 .color(station.body)
                 .font(FontId::new(22.0, theme::condensed())),
         );
-        // right_to_left would reverse each group, so the name and the update note are their own rows.
+        // A `horizontal` inside right_to_left runs right to left too, so the name and the update
+        // note add their parts last to first.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let choice = self.settings.theme;
             let hover = match choice {
@@ -225,10 +226,16 @@ impl App {
         });
     }
 
-    /// Display name and short ID.
+    /// Display name and short ID. Laid out right to left, so the parts are added last to first.
     fn nameplate(&mut self, ui: &mut egui::Ui, station: &Station) {
         ui.horizontal(|ui| {
+            ui.label(RichText::new(self.ctrl.fingerprint().short()).color(station.muted))
+                .on_hover_text(
+                    "Your fingerprint. Viewers see it next to your name and can compare it \
+                     with you to rule out impersonation.",
+                );
             if let Some(edit) = &mut self.name_edit {
+                let save = ui.button("Save").clicked();
                 let response = ui.add(
                     egui::TextEdit::singleline(edit)
                         .char_limit(MAX_NAME_CHARS)
@@ -237,7 +244,7 @@ impl App {
                 response.request_focus();
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if ui.button("Save").clicked() || enter {
+                if save || enter {
                     let name = edit.trim().to_string();
                     if !name.is_empty() {
                         self.ctrl.set_display_name(name.clone());
@@ -249,11 +256,6 @@ impl App {
                     self.name_edit = None;
                 }
             } else {
-                ui.label(
-                    RichText::new(self.ctrl.display_name())
-                        .color(station.body)
-                        .strong(),
-                );
                 let live = self.ctrl.broadcast.is_some();
                 let edit = ui
                     .add_enabled(!live, egui::Button::new("Edit").small())
@@ -262,12 +264,12 @@ impl App {
                 if edit.clicked() {
                     self.name_edit = Some(self.ctrl.display_name().to_string());
                 }
-            }
-            ui.label(RichText::new(self.ctrl.fingerprint().short()).color(station.muted))
-                .on_hover_text(
-                    "Your fingerprint. Viewers see it next to your name and can compare it \
-                     with you to rule out impersonation.",
+                ui.label(
+                    RichText::new(self.ctrl.display_name())
+                        .color(station.body)
+                        .strong(),
                 );
+            }
         });
     }
 
@@ -459,7 +461,6 @@ impl App {
     fn live_signal(&mut self, ui: &mut egui::Ui) {
         let station = station_of(ui);
         let viewers = self.viewer_count;
-        let except = mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
         let Some(signal) = self.ctrl.broadcast.as_ref().map(|broadcast| {
             let stats_line = (viewers > 0).then(|| {
                 let mut stats = broadcast.encoder.stats.lock().unwrap();
@@ -486,23 +487,34 @@ impl App {
                     rates.fps, rates.kbps, rates.avg_ms
                 )
             });
-            let audio = match &broadcast.audio {
+            // Listing the apps keeps the audio-apps thread refreshing, so only a monitor's
+            // sound asks for it.
+            let (audio, monitor_audio) = match &broadcast.audio {
                 Some(audio) if matches!(audio.source, AudioSource::System { .. }) => {
-                    Some(format!("With audio: all sound on this computer, {except}"))
+                    let except =
+                        mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
+                    (
+                        Some(format!("With audio: all sound on this computer, {except}")),
+                        true,
+                    )
                 }
-                Some(audio) => Some(format!("With audio: {}", describe_audio(&audio.source))),
-                None => None,
+                Some(audio) => (
+                    Some(format!("With audio: {}", describe_audio(&audio.source))),
+                    false,
+                ),
+                None => (None, false),
             };
             (
                 broadcast.source_name.clone(),
                 stats_line,
                 audio,
+                monitor_audio,
                 broadcast.audio_note.clone(),
             )
         }) else {
             return;
         };
-        let (name, stats_line, audio, note) = signal;
+        let (name, stats_line, audio, monitor_audio, note) = signal;
         lamp(ui, &station, true);
         ui.add_space(8.0);
         if column_key(ui, &station, "Stop broadcasting").clicked() {
@@ -533,6 +545,17 @@ impl App {
         }
         if let Some(audio) = audio {
             ui.label(RichText::new(audio).color(station.muted));
+        }
+        if monitor_audio {
+            // A muted app drops out of the shared sound within a second, without a restart.
+            mute_apps::ui(
+                ui,
+                &self.ctrl.audio_apps,
+                &self.muted_apps,
+                &mut self.settings,
+                &self.dir,
+                true,
+            );
         }
         if let Some(note) = note {
             ui.colored_label(ui.visuals().warn_fg_color, note);
@@ -595,8 +618,8 @@ impl App {
         });
     }
 
-    /// Share audio sits above Quality in the source modal. The broadcast starts with this
-    /// choice; changing it while a line is already open stops and starts again.
+    /// Share audio sits above Quality in the source modal, which is closed while the line is open,
+    /// so the broadcast keeps the choice it started with.
     fn share_audio_toggle(&mut self, ui: &mut egui::Ui) {
         let audio = self.sources.get(self.selected).and_then(audio_source);
         let supported = audio.as_ref().is_some_and(peeroxide_audio::is_supported);
@@ -622,17 +645,11 @@ impl App {
                 .next()
                 .map(|c| c.to_uppercase().chain(chars).collect())
                 .unwrap_or_default();
-            response = response.on_hover_text(format!(
-                "{scope}. Your microphone is never shared. Changing this restarts the broadcast, \
-                 so viewers connect again."
-            ));
+            response = response.on_hover_text(format!("{scope}. Your microphone is never shared."));
         }
         if response.changed() {
             self.settings.share_audio = share;
             self.save_settings();
-            if self.ctrl.broadcast.is_some() {
-                self.start_broadcast();
-            }
         }
     }
 
@@ -684,21 +701,14 @@ impl App {
                      expect before trusting what you see.",
                 );
             }
-            let mark = if changed_id.is_some() || (same_name && !saved) {
-                format!("{short}  Check ID")
+            let mark = if changed_id.is_some() {
+                PlateMark::ChangedId
+            } else if same_name && !saved {
+                PlateMark::SameName
             } else {
-                "Live".to_string()
+                PlateMark::Live
             };
-            let response = plate(
-                ui,
-                &station,
-                &peer.name,
-                &short,
-                false,
-                true,
-                selected,
-                Some(&mark),
-            );
+            let response = plate(ui, &station, &peer.name, &short, mark, selected);
             if response.on_hover_text(hover).clicked() && !selected {
                 picked = PeerTarget::from_peer(peer);
             }
@@ -748,21 +758,12 @@ impl App {
                     if ui.small_button("Forget").clicked() {
                         forget = true;
                     }
-                    let row = plate(
-                        ui,
-                        &station,
-                        &c.name,
-                        &short,
-                        true,
-                        false,
-                        selected,
-                        Some("Saved"),
-                    )
-                    .on_hover_text(format!(
-                        "ID {short}\nLast watched {}\n{}",
-                        ago(now, c.last_seen),
-                        addrs.join("\n")
-                    ));
+                    let row = plate(ui, &station, &c.name, &short, PlateMark::Saved, selected)
+                        .on_hover_text(format!(
+                            "ID {short}\nLast watched {}\n{}",
+                            ago(now, c.last_seen),
+                            addrs.join("\n")
+                        ));
                     open = row.clicked() && !selected;
                 });
             });
@@ -1260,7 +1261,7 @@ impl App {
 
     fn source_modal(&mut self, ctx: &egui::Context) {
         // Apply stills that arrived before this paint, so the cards don't open empty.
-        self.thumbs.poll(ctx);
+        self.thumbs.poll();
         let station = if ctx.global_style().visuals.dark_mode {
             Station::dark()
         } else {
@@ -1269,6 +1270,11 @@ impl App {
         let mut close = false;
         let mut refresh = false;
         let mut begin = false;
+        // Everything but the cards takes about 300 px. The cards give way on a short or narrow
+        // window, so Start broadcasting stays on screen.
+        let screen = ctx.content_rect();
+        let cards_height = (screen.height() - 300.0).clamp(120.0, 420.0);
+        let min_width = (screen.width() - 96.0).clamp(400.0, 820.0);
         let response = egui::Modal::new(egui::Id::new("source-picker"))
             .frame(
                 egui::Frame::NONE
@@ -1277,11 +1283,11 @@ impl App {
                     .inner_margin(egui::Margin::same(24)),
             )
             .show(ctx, |ui| {
-                ui.set_min_width(820.0);
+                ui.set_min_width(min_width);
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("Source")
-                            .color(station.ink)
+                            .color(station.body)
                             .font(FontId::new(22.0, theme::condensed())),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1307,7 +1313,7 @@ impl App {
                 });
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()
-                    .max_height(420.0)
+                    .max_height(cards_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(12.0, 14.0);
@@ -1405,7 +1411,7 @@ impl App {
             egui::Align2::LEFT_TOP,
             truncate(&title, 28),
             FontId::proportional(14.0),
-            station.ink,
+            station.body,
         );
         if !detail.is_empty() {
             painter.text(
@@ -1456,11 +1462,7 @@ impl eframe::App for App {
     /// Also runs while the main window is minimized, when `ui` doesn't: that's when the mini
     /// player has to appear.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.thumbs_started {
-            self.thumbs_started = true;
-            self.thumbs.begin(&self.sources);
-        }
-        self.thumbs.poll(ctx);
+        self.thumbs.poll();
         let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
         if !minimized {
             return;
@@ -1797,46 +1799,53 @@ fn lamp(ui: &mut egui::Ui, station: &Station, on: bool) {
     }
 }
 
-/// A paper nameplate. `hollow` is the saved mark: a ring instead of a filled dot.
-/// `on_air` is someone broadcasting now: a larger name and a lamp for the dot.
+/// The word after the ID on a nameplate. Every mark but `Saved` is someone broadcasting now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlateMark {
+    Live,
+    /// A saved contact who is not broadcasting: a ring instead of a filled dot.
+    Saved,
+    /// Not the contact saved under this name: the ID changed.
+    ChangedId,
+    /// Another broadcaster uses the same name.
+    SameName,
+}
+
+/// A paper nameplate. Someone on air gets a larger name and a lamp for the dot. A name too long
+/// for the column ends in "…" before the ID.
 fn plate(
     ui: &mut egui::Ui,
     station: &Station,
     name: &str,
     id: &str,
-    hollow: bool,
-    on_air: bool,
+    mark: PlateMark,
     selected: bool,
-    mark: Option<&str>,
 ) -> egui::Response {
-    let name_text = truncate(name, if on_air { 28 } else { 22 });
-    let right = match mark {
-        Some("Live") => "Live".to_string(),
-        Some(mark) if on_air => mark.to_string(),
-        Some(mark) => format!("{id}  {mark}"),
-        None => id.to_string(),
+    let on_air = mark != PlateMark::Saved;
+    let (word, word_color) = match mark {
+        PlateMark::Live => ("Live", station.lamp),
+        PlateMark::Saved => ("Saved", station.ink),
+        PlateMark::ChangedId => ("⚠ Check ID", ui.visuals().error_fg_color),
+        PlateMark::SameName => ("⚠ Check ID", ui.visuals().warn_fg_color),
     };
-    let name_size = if on_air { 16.0 } else { 14.0 };
-    let (name_w, right_w) = ui.ctx().fonts_mut(|fonts| {
-        let name_w = fonts
-            .layout_no_wrap(
-                name_text.clone(),
-                FontId::proportional(name_size),
-                station.ink,
-            )
-            .size()
-            .x;
-        let right_w = fonts
-            .layout_no_wrap(
-                right.clone(),
-                FontId::new(12.0, theme::condensed()),
-                station.ink,
-            )
-            .size()
-            .x;
-        (name_w, right_w)
-    });
-    let width = (12.0 + 8.0 + 12.0 + name_w + 12.0 + right_w + 12.0).min(ui.available_width());
+    let label_font = FontId::new(12.0, theme::condensed());
+    let id_galley = ui
+        .painter()
+        .layout_no_wrap(id.to_string(), label_font.clone(), station.ink);
+    let word_galley = ui
+        .painter()
+        .layout_no_wrap(word.to_string(), label_font, word_color);
+    let right_w = id_galley.size().x + 6.0 + word_galley.size().x;
+    let chrome = 12.0 + 8.0 + 12.0 + 12.0 + right_w + 12.0;
+    let mut name_job = egui::text::LayoutJob::simple_singleline(
+        truncate(name, if on_air { 28 } else { 22 }),
+        FontId::proportional(if on_air { 16.0 } else { 14.0 }),
+        station.ink,
+    );
+    name_job.wrap =
+        egui::text::TextWrapping::truncate_at_width((ui.available_width() - chrome).max(0.0));
+    let name_galley = ui.painter().layout_job(name_job);
+    let width = (chrome + name_galley.size().x).min(ui.available_width());
     let height = if on_air { 40.0 } else { 34.0 };
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let stroke = if selected { 2.0 } else { station.line_w };
@@ -1844,31 +1853,21 @@ fn plate(
     paint_key(ui, rect, station.paper, line, stroke, 2.0);
     let painter = ui.painter();
     let dot = rect.left_center() + vec2(16.0, 0.0);
-    let dot_color = if on_air { station.lamp } else { station.ink };
-    if hollow {
-        painter.circle_stroke(dot, 4.5, Stroke::new(1.5, station.ink));
+    if on_air {
+        painter.circle_filled(dot, 5.0, station.lamp);
     } else {
-        painter.circle_filled(dot, if on_air { 5.0 } else { 4.0 }, dot_color);
+        painter.circle_stroke(dot, 4.5, Stroke::new(1.5, station.ink));
     }
-    painter.text(
-        dot + vec2(14.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        name_text,
-        FontId::proportional(name_size),
+    let middle = |size: egui::Vec2, x: f32| egui::pos2(x, rect.center().y - size.y / 2.0);
+    let word_x = rect.right() - 10.0 - word_galley.size().x;
+    let id_x = word_x - 6.0 - id_galley.size().x;
+    painter.galley(
+        middle(name_galley.size(), dot.x + 14.0),
+        name_galley,
         station.ink,
     );
-    let right_color = if right == "Live" {
-        station.lamp
-    } else {
-        station.ink
-    };
-    painter.text(
-        rect.right_center() - vec2(10.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        right,
-        FontId::new(12.0, theme::condensed()),
-        right_color,
-    );
+    painter.galley(middle(id_galley.size(), id_x), id_galley, station.ink);
+    painter.galley(middle(word_galley.size(), word_x), word_galley, word_color);
     response
 }
 

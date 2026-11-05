@@ -146,8 +146,10 @@ fn style(station: Station) -> egui::Style {
     v.widgets.active.weak_bg_fill = station.strong_fill;
     v.widgets.active.fg_stroke = Stroke::new(1.0, station.strong_ink);
     v.widgets.open.bg_fill = station.paper;
+    v.widgets.open.weak_bg_fill = station.paper;
     v.widgets.open.fg_stroke = Stroke::new(1.0, station.ink);
-    v.selection.bg_fill = station.paper.linear_multiply(0.25);
+    // Selected text is drawn in the selection stroke, so the fill must carry ink in both themes.
+    v.selection.bg_fill = station.stamp;
     v.selection.stroke = Stroke::new(1.0, station.ink);
     v.hyperlink_color = station.body;
     v.error_fg_color = station.lamp;
@@ -168,6 +170,12 @@ pub fn install_fonts(ctx: &egui::Context) {
     let Some(book) = read_face(dir, &["FRABK.TTF", "frabk.ttf"]) else {
         return;
     };
+    // egui's own faces stay behind Franklin for the glyphs it lacks, such as ⚠ and non-Latin names.
+    let fallbacks = fonts
+        .families
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
     fonts.font_data.insert(
         "FranklinBook".into(),
         Arc::new(egui::FontData::from_owned(book)),
@@ -180,10 +188,11 @@ pub fn install_fonts(ctx: &egui::Context) {
             "FranklinCond".into(),
             Arc::new(egui::FontData::from_owned(cond)),
         );
-        fonts.families.insert(
-            egui::FontFamily::Name(Arc::from("Condensed")),
-            vec!["FranklinCond".into()],
-        );
+        let mut condensed = vec!["FranklinCond".to_string()];
+        condensed.extend(fallbacks);
+        fonts
+            .families
+            .insert(egui::FontFamily::Name(Arc::from("Condensed")), condensed);
         CONDENSED.store(true, Ordering::Relaxed);
     }
     ctx.set_fonts(fonts);
