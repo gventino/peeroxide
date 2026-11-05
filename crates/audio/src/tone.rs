@@ -77,7 +77,7 @@ mod tests {
         let beep = render(second + 10_000, 480);
         assert!(beep.iter().any(|s| s.abs() > 0.2));
         assert!(
-            beep.chunks_exact(2).all(|f| f[0] == f[1]),
+            beep.as_chunks::<2>().0.iter().all(|f| f[0] == f[1]),
             "same on both channels"
         );
         let quiet = render(second + 150_000, 480);

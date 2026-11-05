@@ -19,7 +19,7 @@ pub fn picture(n: u32) -> Vec<u8> {
 pub fn psnr(bgra: &[u8], rgba: &[u8]) -> f64 {
     let mut se = 0.0;
     let mut n = 0.0;
-    for (s, d) in bgra.chunks_exact(4).zip(rgba.chunks_exact(4)) {
+    for (s, d) in bgra.as_chunks::<4>().0.iter().zip(rgba.as_chunks::<4>().0) {
         for (a, b) in [(s[2], d[0]), (s[1], d[1]), (s[0], d[2])] {
             se += (f64::from(a) - f64::from(b)).powi(2);
             n += 1.0;

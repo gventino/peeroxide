@@ -119,7 +119,7 @@ mod tests {
         let mut enc = OpusEncoder::new(bitrate).unwrap();
         let mut dec = OpusDecoder::new().unwrap();
         let mut out = Vec::with_capacity(pcm.len());
-        for frame in pcm.chunks_exact(FRAME_LEN) {
+        for frame in pcm.as_chunks::<FRAME_LEN>().0 {
             let packet = enc.encode(frame).unwrap();
             assert!(!packet.is_empty() && packet.len() <= MAX_PACKET);
             out.extend(dec.decode(&packet).unwrap());
@@ -244,7 +244,7 @@ mod tests {
         let mut enc = OpusEncoder::new(128_000).unwrap();
         let mut dec = OpusDecoder::new().unwrap();
         let mut toc = 0;
-        for frame in pcm.chunks_exact(FRAME_LEN) {
+        for frame in pcm.as_chunks::<FRAME_LEN>().0 {
             let packet = enc.encode(frame).unwrap();
             toc = packet[0];
             dec.decode(&packet).unwrap();
@@ -259,7 +259,7 @@ mod tests {
         let mut enc = OpusEncoder::new(128_000).unwrap();
         let mut dec = OpusDecoder::new().unwrap();
         let (mut te, mut td, mut bytes) = (Duration::ZERO, Duration::ZERO, 0);
-        for frame in pcm.chunks_exact(FRAME_LEN) {
+        for frame in pcm.as_chunks::<FRAME_LEN>().0 {
             let t = Instant::now();
             let packet = enc.encode(frame).unwrap();
             te += t.elapsed();

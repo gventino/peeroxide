@@ -14,6 +14,8 @@ mod mini_player;
 mod mute_apps;
 mod settings;
 mod stats;
+mod theme;
+mod thumbs;
 mod ui;
 mod video;
 mod viewer_state;

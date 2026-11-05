@@ -130,6 +130,7 @@ impl Sink {
         }
     }
 
+    #[cfg(windows)]
     pub(crate) fn fail(&self, error: anyhow::Error) {
         let _ = self.tx.try_send(Err(error));
     }
@@ -149,19 +150,21 @@ fn new_sink() -> (Sink, Receiver<anyhow::Result<AudioChunk>>, Arc<AtomicBool>) {
 /// (Peeroxide) and the apps `muted` leaves out, following its changes within a second. While
 /// nothing that plays is muted, this is the same single capture as [`AudioSource::System`].
 pub fn start_monitor_capture(exclude_pid: u32, muted: MutedApps) -> anyhow::Result<AudioCapture> {
-    let (sink, rx, stop) = new_sink();
     #[cfg(windows)]
-    let thread = filtered::start(exclude_pid, muted, sink)?;
+    {
+        let (sink, rx, stop) = new_sink();
+        let thread = filtered::start(exclude_pid, muted, sink)?;
+        Ok(AudioCapture {
+            rx,
+            stop,
+            thread: Some(thread),
+        })
+    }
     #[cfg(not(windows))]
-    let thread = {
-        let _ = (exclude_pid, muted, sink);
+    {
+        let _ = (exclude_pid, muted);
         anyhow::bail!("audio sharing isn't available on this system yet")
-    };
-    Ok(AudioCapture {
-        rx,
-        stop,
-        thread: Some(thread),
-    })
+    }
 }
 
 /// Starts capturing `source` on its own thread.

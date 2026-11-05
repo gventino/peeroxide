@@ -7,6 +7,74 @@ use serde::{Deserialize, Serialize};
 
 const FILE: &str = "settings.toml";
 
+/// Which side of the palette to paint. `System` follows Windows.
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeChoice {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl ThemeChoice {
+    pub const ALL: [Self; 3] = [Self::System, Self::Dark, Self::Light];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+}
+
+/// The color theme. Each has a dark and a light side.
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Palette {
+    #[default]
+    Station,
+    Gruvbox,
+    Kanagawa,
+    Dracula,
+    Catppuccin,
+    Discord,
+}
+
+impl Palette {
+    /// In the order of the variants, which the theme module relies on.
+    pub const ALL: [Self; 6] = [
+        Self::Station,
+        Self::Gruvbox,
+        Self::Kanagawa,
+        Self::Dracula,
+        Self::Catppuccin,
+        Self::Discord,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Station => "Station",
+            Self::Gruvbox => "Gruvbox",
+            Self::Kanagawa => "Kanagawa",
+            Self::Dracula => "Dracula",
+            Self::Catppuccin => "Catppuccin",
+            Self::Discord => "Discord",
+        }
+    }
+
+    /// The names of the dark and the light side.
+    pub fn sides(self) -> &'static str {
+        match self {
+            Self::Station | Self::Gruvbox | Self::Discord => "Dark · Light",
+            Self::Kanagawa => "Wave · Lotus",
+            Self::Dracula => "Dracula · Alucard",
+            Self::Catppuccin => "Mocha · Latte",
+        }
+    }
+}
+
 /// User preferences persisted per profile.
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
@@ -26,6 +94,13 @@ pub struct Settings {
     pub audio_apps: BTreeMap<String, bool>,
     /// Where the mini player was left: x, y, width, height in whole points.
     pub mini_player: Option<[i32; 4]>,
+    /// Dark, light, or following the system. Missing in older files, which follow the system.
+    pub theme: ThemeChoice,
+    /// The color theme. Missing in older files, which keep the station's own.
+    pub palette: Palette,
+    /// Debug figures: codec, frame rate, bitrate and timings over a watched stream and under
+    /// the live line. Off unless turned on in Settings or in this file.
+    pub show_stats: bool,
 }
 
 impl Settings {
@@ -75,6 +150,9 @@ mod tests {
             muted: true,
             audio_apps: BTreeMap::from([("discord.exe".into(), false), ("game.exe".into(), true)]),
             mini_player: Some([1504, 791, 400, 225]),
+            theme: ThemeChoice::Dark,
+            palette: Palette::Kanagawa,
+            show_stats: true,
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
@@ -103,6 +181,9 @@ mod tests {
             s.mini_player, None,
             "the mini player opens in its default corner"
         );
+        assert_eq!(s.theme, ThemeChoice::System);
+        assert_eq!(s.palette, Palette::Station);
+        assert!(!s.show_stats, "the debug figures stay hidden");
         assert_eq!(s.volume(), 1.0);
         let loud = Settings {
             volume: Some(250),
@@ -145,5 +226,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.preset(), Preset::default());
+    }
+
+    #[test]
+    fn palettes_are_listed_in_variant_order() {
+        for (index, palette) in Palette::ALL.into_iter().enumerate() {
+            assert_eq!(palette as usize, index, "{palette:?}");
+        }
     }
 }

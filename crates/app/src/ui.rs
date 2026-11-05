@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{
+    self, Align, Color32, ColorImage, FontId, Layout, Rect, RichText, Sense, Stroke, TextureHandle,
+    TextureOptions, vec2,
+};
 use peeroxide_audio::{AudioSource, MutedApps};
 use peeroxide_capture::{Source, SourceKind, list_sources};
 use peeroxide_codec::{Codec, Preset, hardware_h265_encoder};
@@ -16,16 +19,18 @@ use crate::Args;
 use crate::audio_encoder::{audio_source, describe as describe_audio};
 use crate::contacts::{Contact, Contacts, ago};
 use crate::controller::{Controller, Event, PeerTarget, local_ipv4s};
-use crate::encoder::EncoderEnd;
+use crate::encoder::{EncoderEnd, PreviewFrame};
 use crate::fullscreen;
 use crate::mini_player::{self, Action};
 use crate::mute_apps;
-use crate::settings::Settings;
+use crate::settings::{Palette, Settings, ThemeChoice};
+use crate::theme::{self, Station};
+use crate::thumbs::Thumbnails;
 use crate::video::VideoView;
 use crate::viewer_state::{PeerRef, ViewerInput, ViewerState};
 
-const LIVE_RED: Color32 = Color32::from_rgb(230, 70, 70);
 const FULLSCREEN_BAR_HEIGHT: f32 = 56.0;
+const COLUMN_WIDTH: f32 = 340.0;
 const MAX_NAME_CHARS: usize = 40;
 
 pub struct App {
@@ -67,6 +72,15 @@ pub struct App {
     fullscreen_exit: bool,
     /// When this app last entered fullscreen.
     fullscreen_since: Option<Instant>,
+    /// The source picker is open.
+    picker: bool,
+    /// The settings window is open.
+    settings_open: bool,
+    /// The broadcast port as typed in the settings window.
+    port_input: String,
+    thumbs: Thumbnails,
+    /// Last copy of a frame this machine already captured, shown in the well while broadcasting.
+    preview: Option<TextureHandle>,
 }
 
 /// What the updater has to say in the top bar, e.g. "Updated to 0.5.0".
@@ -87,6 +101,9 @@ impl App {
         dir: PathBuf,
         ctx: egui::Context,
     ) -> anyhow::Result<Self> {
+        theme::install_fonts(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let thumbs = Thumbnails::new(ctx.clone());
         let ctrl = Controller::new(identity, display_name, ctx)?;
         let video = Arc::new(Mutex::new(VideoView::default()));
         let mini = mini_player::Shared::new(video.clone(), ctrl.video.clone(), ctrl.output.clone());
@@ -121,6 +138,11 @@ impl App {
             fullscreen_toggle: false,
             fullscreen_exit: false,
             fullscreen_since: None,
+            picker: false,
+            settings_open: false,
+            port_input: String::new(),
+            thumbs,
+            preview: None,
         };
         app.ctrl.output.set_volume(app.settings.volume());
         app.ctrl.output.set_muted(app.settings.muted);
@@ -155,7 +177,6 @@ impl App {
         let Some(note) = &self.update_note else {
             return;
         };
-        ui.separator();
         if note.warn {
             ui.colored_label(ui.visuals().warn_fg_color, &note.text);
         } else {
@@ -175,12 +196,35 @@ impl App {
         }
     }
 
+    /// The first row of the column: the name and ID, and the settings key at the right end.
     fn identity_ui(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if gear_button(ui, &station)
+                    .on_hover_text("Settings")
+                    .clicked()
+                {
+                    self.open_settings();
+                }
+                // What the gear leaves, read left to right.
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    self.nameplate(ui, &station);
+                });
+            });
+        });
+        if self.update_note.is_some() {
+            ui.horizontal_wrapped(|ui| self.update_note_ui(ui));
+        }
+    }
+
+    /// Display name and short ID. The ID steps aside while the name is edited.
+    fn nameplate(&mut self, ui: &mut egui::Ui, station: &Station) {
         if let Some(edit) = &mut self.name_edit {
             let response = ui.add(
                 egui::TextEdit::singleline(edit)
                     .char_limit(MAX_NAME_CHARS)
-                    .desired_width(220.0),
+                    .desired_width((ui.available_width() - 60.0).max(80.0)),
             );
             response.request_focus();
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -196,18 +240,24 @@ impl App {
             } else if escape {
                 self.name_edit = None;
             }
-        } else {
-            ui.label(RichText::new(self.ctrl.display_name()).strong());
-            let live = self.ctrl.broadcast.is_some();
-            let edit = ui
-                .add_enabled(!live, egui::Button::new("✏").small())
-                .on_hover_text("Change the name others see")
-                .on_disabled_hover_text("Stop broadcasting to change your name");
-            if edit.clicked() {
-                self.name_edit = Some(self.ctrl.display_name().to_string());
-            }
+            return;
         }
-        ui.weak(format!("ID {}", self.ctrl.fingerprint().short()))
+        let name = self.ctrl.display_name();
+        ui.label(
+            RichText::new(truncate(name, 18))
+                .color(station.body)
+                .strong(),
+        )
+        .on_hover_text(name);
+        let live = self.ctrl.broadcast.is_some();
+        let edit = ui
+            .add_enabled(!live, egui::Button::new("Edit").small())
+            .on_hover_text("Change the name others see")
+            .on_disabled_hover_text("Stop broadcasting to change your name");
+        if edit.clicked() {
+            self.name_edit = Some(self.ctrl.display_name().to_string());
+        }
+        ui.label(RichText::new(self.ctrl.fingerprint().short()).color(station.muted))
             .on_hover_text(
                 "Your fingerprint. Viewers see it next to your name and can compare it \
                  with you to rule out impersonation.",
@@ -370,118 +420,53 @@ impl App {
         }
     }
 
-    fn broadcast_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Broadcast");
-        ui.add_space(4.0);
+    fn station_column(&mut self, ui: &mut egui::Ui) {
+        self.identity_ui(ui);
+        ui.add_space(14.0);
         let live = self.ctrl.broadcast.is_some();
-        ui.add_enabled_ui(!live, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Source");
-                if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
-                    self.refresh_sources();
-                }
-            });
-            let current = self
-                .sources
-                .get(self.selected)
-                .map(|s| s.name.clone())
-                .unwrap_or_default();
-            egui::ComboBox::from_id_salt("source")
-                .width(ui.available_width())
-                .selected_text(truncate(&current, 38))
-                .show_ui(ui, |ui| {
-                    for (i, s) in self.sources.iter().enumerate() {
-                        let icon = match s.kind {
-                            SourceKind::Monitor => "🖥",
-                            SourceKind::Window => "🗔",
-                            SourceKind::TestPattern => "▦",
-                        };
-                        ui.selectable_value(
-                            &mut self.selected,
-                            i,
-                            format!("{icon} {}", truncate(&s.name, 60)),
-                        );
-                    }
-                });
-            ui.label("Quality");
-            let before = self.preset;
-            egui::ComboBox::from_id_salt("preset")
-                .width(ui.available_width())
-                .selected_text(self.preset.name)
-                .show_ui(ui, |ui| {
-                    for p in Preset::ALL {
-                        let mut hint = format!(
-                            "Up to {}x{}, at most {} Mbps of upload.",
-                            p.max_width,
-                            p.max_height,
-                            p.bitrate_bps / 1_000_000,
-                        );
-                        if p == Preset::INTERNET {
-                            hint +=
-                                " Recommended for Radmin VPN, Hamachi and other internet links.";
-                        }
-                        if p.fps >= 60 && self.h265_encoder.is_none() {
-                            hint += " No H.265 encoder was found on the graphics card, so \
-                                     60 fps uses H.264 on the CPU and may not keep up.";
-                        }
-                        ui.selectable_value(&mut self.preset, p, p.name)
-                            .on_hover_text(hint);
-                    }
-                });
-            if self.preset != before {
-                self.settings.preset = Some(self.preset.id.into());
-                self.save_settings();
-            }
-            if !live {
-                self.share_audio_ui(ui);
-            }
-        });
-        ui.add_space(6.0);
+        if live {
+            self.live_signal(ui);
+        } else {
+            self.setup_column(ui);
+        }
+        ui.add_space(12.0);
+        self.peer_list_ui(ui);
+        self.saved_ui(ui);
+        ui.add_space(8.0);
+        self.watch_status(ui);
+        if let Some(note) = &self.broadcast_note {
+            ui.colored_label(ui.visuals().warn_fg_color, note);
+        }
+    }
 
-        if let Some(b) = &self.ctrl.broadcast {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("● LIVE").color(LIVE_RED).strong());
-                let n = self.viewer_count;
-                ui.label(format!("{n} viewer{}", if n == 1 { "" } else { "s" }));
-            });
-            ui.label(format!("Sharing {}", truncate(&b.source_name, 40)));
-            match &b.audio {
-                Some(a) if matches!(a.source, AudioSource::System { .. }) => {
-                    let except =
-                        mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
-                    ui.label(format!(
-                        "🔊 With audio: all sound on this computer, {except}"
-                    ));
-                    mute_apps::ui(
-                        ui,
-                        &self.ctrl.audio_apps,
-                        &self.muted_apps,
-                        &mut self.settings,
-                        &self.dir,
-                    );
-                }
-                Some(a) => {
-                    ui.label(format!("🔊 With audio: {}", describe_audio(&a.source)));
-                }
-                None => {
-                    ui.weak("🔇 No audio");
-                }
-            }
-            if self.viewer_count == 0 {
-                ui.weak("Capture paused until someone watches");
-            } else {
-                let mut stats = b.encoder.stats.lock().unwrap();
-                let r = stats.meter.rates();
+    fn setup_column(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
+        if column_key(ui, &station, "Start broadcasting")
+            .on_hover_text("Choose a window and quality")
+            .clicked()
+        {
+            self.open_picker();
+        }
+    }
+
+    fn live_signal(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
+        let viewers = self.viewer_count;
+        let show_stats = self.settings.show_stats;
+        let Some(signal) = self.ctrl.broadcast.as_ref().map(|broadcast| {
+            let stats_line = (viewers > 0 && show_stats).then(|| {
+                let mut stats = broadcast.encoder.stats.lock().unwrap();
+                let rates = stats.meter.rates();
                 let size = stats
                     .canvas
-                    .map(|(w, h)| format!("{w}x{h} · "))
+                    .map(|(w, h)| format!("{w}×{h} · "))
                     .unwrap_or_default();
                 let codec = stats
                     .codec
                     .as_ref()
                     .map(|c| format!(" · {c}"))
                     .unwrap_or_default();
-                let audio = b
+                let audio = broadcast
                     .audio
                     .as_ref()
                     .map(|a| {
@@ -489,22 +474,123 @@ impl App {
                         format!(" · audio {kbps:.0} kbps")
                     })
                     .unwrap_or_default();
-                ui.weak(format!(
+                format!(
                     "{size}{:.0} fps · {:.0} kbps · encode {:.1} ms{codec}{audio}",
-                    r.fps, r.kbps, r.avg_ms
-                ));
-            }
-            if let Some(note) = &b.audio_note {
-                ui.colored_label(ui.visuals().warn_fg_color, note);
-            }
-            let (port, fingerprint) = (b.port, self.ctrl.fingerprint().to_hex());
-            ui.horizontal(|ui| {
-                ui.weak(format!("UDP port {port}"));
-                ui.menu_button("Copy connect string", |ui| {
-                    ui.weak("For viewers who can't see you in the list.\nPick the network they share with you:");
+                    rates.fps, rates.kbps, rates.avg_ms
+                )
+            });
+            // Listing the apps keeps the audio-apps thread refreshing, so only a monitor's
+            // sound asks for it.
+            let (audio, monitor_audio) = match &broadcast.audio {
+                Some(audio) if matches!(audio.source, AudioSource::System { .. }) => {
+                    let except =
+                        mute_apps::except_text(&self.ctrl.audio_apps.apps(), &self.muted_apps);
+                    (
+                        Some(format!("With audio: all sound on this computer, {except}")),
+                        true,
+                    )
+                }
+                Some(audio) => (
+                    Some(format!("With audio: {}", describe_audio(&audio.source))),
+                    false,
+                ),
+                None => (None, false),
+            };
+            (
+                broadcast.source_name.clone(),
+                stats_line,
+                audio,
+                monitor_audio,
+                broadcast.audio_note.clone(),
+            )
+        }) else {
+            return;
+        };
+        let (name, stats_line, audio, monitor_audio, note) = signal;
+        if column_key(ui, &station, "Stop broadcasting").clicked() {
+            self.ctrl.stop_broadcast(StopReason::Stopped);
+            self.viewer_count = 0;
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(format!("Sharing {}", truncate(&name, 32)))
+                .color(station.body)
+                .size(16.0),
+        );
+        ui.label(
+            RichText::new(format!(
+                "{viewers} viewer{}",
+                if viewers == 1 { "" } else { "s" }
+            ))
+            .color(station.muted),
+        );
+        if let Some(line) = stats_line {
+            ui.label(
+                RichText::new(line)
+                    .color(station.muted)
+                    .font(FontId::new(13.0, theme::condensed())),
+            );
+        } else if viewers == 0 {
+            ui.label(RichText::new("Capture paused until someone watches").color(station.muted));
+        }
+        if let Some(audio) = audio {
+            ui.label(RichText::new(audio).color(station.muted));
+        }
+        if monitor_audio {
+            // A muted app drops out of the shared sound within a second, without a restart.
+            mute_apps::ui(
+                ui,
+                &self.ctrl.audio_apps,
+                &self.muted_apps,
+                &mut self.settings,
+                &self.dir,
+                true,
+            );
+        }
+        if let Some(note) = note {
+            ui.colored_label(ui.visuals().warn_fg_color, note);
+        }
+    }
+
+    fn open_picker(&mut self) {
+        self.refresh_sources();
+        self.thumbs.ensure(&self.sources);
+        self.picker = true;
+    }
+
+    fn close_picker(&mut self) {
+        self.picker = false;
+    }
+
+    fn live_bar(&mut self, ui: &mut egui::Ui) {
+        let Some((source_name, port)) = self
+            .ctrl
+            .broadcast
+            .as_ref()
+            .map(|broadcast| (broadcast.source_name.clone(), broadcast.port))
+        else {
+            return;
+        };
+        let station = station_of(ui);
+        let source = truncate(&source_name, 36);
+        let quality = preset_short(self.preset);
+        let fingerprint = self.ctrl.fingerprint().to_hex();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Source").color(station.muted));
+            ui.label(RichText::new(source).color(station.body));
+            ui.add_space(10.0);
+            ui.label(RichText::new("Quality").color(station.muted));
+            ui.label(RichText::new(quality).color(station.body));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let copy = station_key(&station, "Copy connect string", station.dark, 48.0, 18.0);
+                egui::containers::menu::MenuButton::from_button(copy).ui(ui, |ui| {
+                    ui.label(
+                        "For viewers who can't see you in the list. \
+                         Pick the network they share with you:",
+                    );
                     let adapters = local_ipv4s();
                     if adapters.is_empty() {
-                        ui.weak("No network adapters found");
+                        ui.label("No network adapters found");
                     }
                     for (adapter, ip) in adapters {
                         let connect = format!("{ip}:{port}#{fingerprint}");
@@ -519,121 +605,104 @@ impl App {
                     }
                 });
             });
-            ui.add_space(4.0);
-            if ui.button("■ Stop broadcasting").clicked() {
-                self.ctrl.stop_broadcast(StopReason::Stopped);
-                self.viewer_count = 0;
-            }
-        } else if ui.button("▶ Start broadcasting").clicked() {
-            self.start_broadcast();
-        }
-        if let Some(note) = &self.broadcast_note {
-            ui.colored_label(ui.visuals().warn_fg_color, note);
-        }
+        });
     }
 
-    /// "Share audio" checkbox, with exactly what it would capture for the selected source.
-    fn share_audio_ui(&mut self, ui: &mut egui::Ui) {
+    /// Share audio sits above Quality in the source modal, which is closed while the line is open,
+    /// so the broadcast keeps the choice it started with.
+    fn share_audio_toggle(&mut self, ui: &mut egui::Ui) {
         let audio = self.sources.get(self.selected).and_then(audio_source);
         let supported = audio.as_ref().is_some_and(peeroxide_audio::is_supported);
-        ui.add_space(2.0);
-        let checkbox = ui
-            .add_enabled(
-                supported,
-                egui::Checkbox::new(&mut self.settings.share_audio, "Share audio"),
-            )
-            .on_disabled_hover_text(if audio.is_none() {
+        let station = station_of(ui);
+        let mut share = self.settings.share_audio;
+        let mut response = ui.add_enabled(
+            supported,
+            egui::Checkbox::new(
+                &mut share,
+                RichText::new("Share audio").size(15.0).color(station.body),
+            ),
+        );
+        if !supported {
+            response = response.on_disabled_hover_text(if audio.is_none() {
                 "Can't tell which app plays this window's sound"
             } else {
                 "Audio sharing isn't available on this system yet"
             });
-        if checkbox.changed() {
-            self.save_settings();
-        }
-        if let Some(audio) = audio.filter(|_| supported && self.settings.share_audio) {
-            let scope = describe_audio(&audio);
+        } else if let Some(audio) = &audio {
+            let scope = describe_audio(audio);
             let mut chars = scope.chars();
             let scope: String = chars
                 .next()
                 .map(|c| c.to_uppercase().chain(chars).collect())
                 .unwrap_or_default();
-            ui.weak(format!("{scope}. Your microphone is never shared."));
-            if matches!(audio, AudioSource::System { .. }) {
-                mute_apps::ui(
-                    ui,
-                    &self.ctrl.audio_apps,
-                    &self.muted_apps,
-                    &mut self.settings,
-                    &self.dir,
-                );
-            }
+            response = response.on_hover_text(format!("{scope}. Your microphone is never shared."));
+        }
+        if response.changed() {
+            self.settings.share_audio = share;
+            self.save_settings();
         }
     }
 
     fn peer_list_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Broadcasting on this network").strong());
+        let station = station_of(ui);
+        ui.label(
+            RichText::new("Broadcasting on this network")
+                .color(station.body)
+                .font(FontId::new(15.0, theme::condensed())),
+        );
         if self.peers.is_empty() {
             let text = self
                 .ctrl
                 .discovery_error
                 .as_deref()
                 .unwrap_or("No one is broadcasting yet");
-            ui.weak(text);
+            ui.label(RichText::new(text).color(station.muted));
             return;
         }
         let watched = self.active_peer();
         let mut picked = None;
-        egui::ScrollArea::vertical()
-            .max_height(240.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for peer in &self.peers {
-                    let short = Fingerprint::from_hex(&peer.fingerprint)
-                        .map(|f| f.short())
-                        .unwrap_or_default();
-                    let same_name = self.peers.iter().filter(|p| p.name == peer.name).count() > 1;
-                    let selected = watched.as_deref() == Some(peer.fingerprint.as_str());
-                    let saved = self.contacts.get(&peer.fingerprint).is_some();
-                    let changed_id = self.contacts.name_conflict(&peer.name, &peer.fingerprint);
-                    ui.horizontal(|ui| {
-                        let addrs: Vec<String> =
-                            peer.addrs.iter().map(ToString::to_string).collect();
-                        let icon = if saved { "★" } else { "🖵" };
-                        let row = ui
-                            .selectable_label(
-                                selected,
-                                format!("{icon} {}", truncate(&peer.name, 24)),
-                            )
-                            .on_hover_text(format!(
-                                "ID {short}\nFingerprint {}\n{}",
-                                peer.fingerprint,
-                                addrs.join("\n")
-                            ));
-                        ui.weak(&short);
-                        if let Some(old) = changed_id {
-                            let old_id = Fingerprint::from_hex(&old.fingerprint)
-                                .map(|f| f.short())
-                                .unwrap_or_default();
-                            ui.colored_label(ui.visuals().error_fg_color, "⚠")
-                                .on_hover_text(format!(
-                                    "Not the {} you saved: their ID changed (was {old_id}).\n\
-                                     This happens after a reinstall, but it can also be someone \
-                                     impersonating them. Confirm the ID with the person.",
-                                    old.name
-                                ));
-                        } else if same_name && !saved {
-                            ui.colored_label(ui.visuals().warn_fg_color, "⚠")
-                                .on_hover_text(
-                                    "Another broadcaster uses the same name. Check the ID with the \
-                                 person you expect before trusting what you see.",
-                                );
-                        }
-                        if row.clicked() && !selected {
-                            picked = PeerTarget::from_peer(peer);
-                        }
-                    });
-                }
-            });
+        for peer in &self.peers {
+            let short = Fingerprint::from_hex(&peer.fingerprint)
+                .map(|f| f.short())
+                .unwrap_or_default();
+            let same_name = self.peers.iter().filter(|p| p.name == peer.name).count() > 1;
+            let selected = watched.as_deref() == Some(peer.fingerprint.as_str());
+            let saved = self.contacts.get(&peer.fingerprint).is_some();
+            let changed_id = self.contacts.name_conflict(&peer.name, &peer.fingerprint);
+            let addrs: Vec<String> = peer.addrs.iter().map(ToString::to_string).collect();
+            let mut hover = format!(
+                "ID {short}\nFingerprint {}\n{}",
+                peer.fingerprint,
+                addrs.join("\n")
+            );
+            if let Some(old) = &changed_id {
+                let old_id = Fingerprint::from_hex(&old.fingerprint)
+                    .map(|f| f.short())
+                    .unwrap_or_default();
+                hover.push_str(&format!(
+                    "\nNot the {} you saved: their ID changed (was {old_id}). This happens after a \
+                     reinstall, but it can also be someone impersonating them. Confirm the ID with \
+                     the person.",
+                    old.name
+                ));
+            } else if same_name && !saved {
+                hover.push_str(
+                    "\nAnother broadcaster uses the same name. Check the ID with the person you \
+                     expect before trusting what you see.",
+                );
+            }
+            let mark = if changed_id.is_some() {
+                PlateMark::ChangedId
+            } else if same_name && !saved {
+                PlateMark::SameName
+            } else {
+                PlateMark::Live
+            };
+            let response = plate(ui, &station, &peer.name, &short, mark, selected);
+            if response.on_hover_text(hover).clicked() && !selected {
+                picked = PeerTarget::from_peer(peer);
+            }
+        }
         if let Some(target) = picked {
             self.watch(target);
         }
@@ -652,48 +721,58 @@ impl App {
             return;
         }
         ui.add_space(8.0);
-        ui.label(RichText::new("Saved").strong())
-            .on_hover_text("People you watched before. Click to connect at their last address.");
+        let station = station_of(ui);
+        ui.label(
+            RichText::new("Saved")
+                .color(station.muted)
+                .font(FontId::new(13.0, theme::condensed())),
+        )
+        .on_hover_text("People you watched before. Click to connect at their last address.");
         let watched = self.active_peer();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         let (mut picked, mut removed) = (None, None);
-        egui::ScrollArea::vertical()
-            .id_salt("saved")
-            .max_height(200.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for c in &offline {
-                    let Some(fingerprint) = Fingerprint::from_hex(&c.fingerprint) else {
-                        continue;
-                    };
-                    let selected = watched.as_deref() == Some(c.fingerprint.as_str());
-                    ui.horizontal(|ui| {
-                        let addrs: Vec<String> = c.addrs.iter().map(ToString::to_string).collect();
-                        let row = ui
-                            .selectable_label(selected, format!("☆ {}", truncate(&c.name, 22)))
-                            .on_hover_text(format!(
-                                "ID {}\nLast watched {}\n{}",
-                                fingerprint.short(),
-                                ago(now, c.last_seen),
-                                addrs.join("\n")
-                            ));
-                        ui.weak(fingerprint.short());
-                        if ui.small_button("🗑").on_hover_text("Forget").clicked() {
-                            removed = Some(c.fingerprint.clone());
-                        }
-                        if row.clicked() && !selected {
-                            picked = Some(PeerTarget {
-                                fingerprint,
-                                name: c.name.clone(),
-                                addrs: c.addrs.clone(),
-                            });
-                        }
-                    });
+        for c in &offline {
+            let Some(fingerprint) = Fingerprint::from_hex(&c.fingerprint) else {
+                continue;
+            };
+            let selected = watched.as_deref() == Some(c.fingerprint.as_str());
+            let addrs: Vec<String> = c.addrs.iter().map(ToString::to_string).collect();
+            let short = fingerprint.short();
+            let mut forget = false;
+            let mut open = false;
+            ui.horizontal(|ui| {
+                // Room for Forget after the plate.
+                let room = (ui.available_width() - 64.0).max(0.0);
+                let row = ui
+                    .scope(|ui| {
+                        ui.set_max_width(room);
+                        plate(ui, &station, &c.name, &short, PlateMark::Saved, selected)
+                    })
+                    .inner
+                    .on_hover_text(format!(
+                        "ID {short}\nLast watched {}\n{}",
+                        ago(now, c.last_seen),
+                        addrs.join("\n")
+                    ));
+                open = row.clicked() && !selected;
+                if ui.small_button("Forget").clicked() {
+                    forget = true;
                 }
             });
+            if forget {
+                removed = Some(c.fingerprint.clone());
+            }
+            if open {
+                picked = Some(PeerTarget {
+                    fingerprint,
+                    name: c.name.clone(),
+                    addrs: c.addrs.clone(),
+                });
+            }
+        }
         if let Some(fp) = removed {
             self.contacts.remove(&fp);
             if let Err(e) = self.contacts.save(&self.dir) {
@@ -705,17 +784,10 @@ impl App {
         }
     }
 
-    fn watch_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Watch");
-        ui.add_space(4.0);
-        self.peer_list_ui(ui);
-        self.saved_ui(ui);
-        ui.add_space(8.0);
-
+    fn watch_status(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
         match self.viewer.clone() {
-            ViewerState::Idle => {
-                ui.weak("Not watching");
-            }
+            ViewerState::Idle => {}
             ViewerState::Connecting { peer } => {
                 ui.horizontal(|ui| {
                     ui.spinner();
@@ -725,25 +797,7 @@ impl App {
                     self.apply(ViewerInput::StopWatching);
                 }
             }
-            ViewerState::Streaming {
-                broadcaster_name, ..
-            } => {
-                ui.label(format!("Watching {broadcaster_name}"));
-                self.volume_ui(ui);
-                ui.horizontal(|ui| {
-                    if ui.button("■ Stop watching").clicked() {
-                        self.apply(ViewerInput::StopWatching);
-                    }
-                    if ui
-                        .button("⛶ Fullscreen")
-                        .on_hover_text("Or press F11, or double-click the video. Esc leaves.")
-                        .clicked()
-                    {
-                        self.fullscreen_toggle = true;
-                    }
-                    mini_player_button(ui);
-                });
-            }
+            ViewerState::Streaming { .. } => self.volume_ui(ui),
             ViewerState::Disconnected { reason, .. } => {
                 ui.colored_label(ui.visuals().warn_fg_color, reason);
                 if ui.button("OK").clicked() {
@@ -756,21 +810,28 @@ impl App {
         }
 
         ui.add_space(8.0);
-        egui::CollapsingHeader::new("Connect manually").show(ui, |ui| {
-            ui.weak("IP:PORT#FINGERPRINT, for networks where discovery is blocked");
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.connect_input)
-                    .desired_width(ui.available_width())
-                    .hint_text("192.168.0.10:50123#3f9a…"),
-            );
-            let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui.button("Watch").clicked() || submitted {
-                match parse_connect(&self.connect_input) {
-                    Ok(target) => self.watch(target),
-                    Err(e) => self.watch_note = Some(e.to_string()),
+        egui::CollapsingHeader::new(RichText::new("Connect manually").color(station.muted)).show(
+            ui,
+            |ui| {
+                ui.label(
+                    RichText::new("IP:PORT#FINGERPRINT, for networks where discovery is blocked")
+                        .color(station.muted),
+                );
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.connect_input)
+                        .desired_width(ui.available_width())
+                        .hint_text("192.168.0.10:50123#3f9a…"),
+                );
+                let submitted =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.button("Watch").clicked() || submitted {
+                    match parse_connect(&self.connect_input) {
+                        Ok(target) => self.watch(target),
+                        Err(e) => self.watch_note = Some(e.to_string()),
+                    }
                 }
-            }
-        });
+            },
+        );
     }
 
     /// Mute button and volume slider, or why there is nothing to hear.
@@ -1021,12 +1082,570 @@ impl App {
             r.fps, r.kbps, r.avg_ms, s.dropped
         )
     }
+    fn well(&mut self, ui: &mut egui::Ui) {
+        match self.viewer.clone() {
+            ViewerState::Streaming { .. } => {
+                let overlay = if self.settings.show_stats {
+                    self.watch_overlay()
+                } else {
+                    String::new()
+                };
+                let bar_h = 40.0;
+                let gap = 10.0;
+                let video_h = (ui.available_height() - bar_h - gap).max(1.0);
+                let played = ui
+                    .allocate_ui_with_layout(
+                        vec2(ui.available_width(), video_h),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            self.video
+                                .lock()
+                                .unwrap()
+                                .ui(ui, &self.ctrl.video, &overlay)
+                        },
+                    )
+                    .inner;
+                if played.double_clicked() {
+                    self.fullscreen_toggle = true;
+                }
+                ui.add_space(gap);
+                self.watch_actions(ui);
+            }
+            ViewerState::Connecting { peer } => {
+                VideoView::placeholder(ui, &format!("Connecting to {}…", peer.name));
+            }
+            ViewerState::Disconnected { peer, reason } => {
+                VideoView::placeholder(ui, &format!("{}: {reason}", peer.name));
+            }
+            ViewerState::Idle => self.own_well(ui),
+        }
+    }
+
+    /// The three picture controls sit under the video, centered.
+    /// The bottom bar belongs to the broadcast, and it is absent when this window is only watching.
+    fn watch_actions(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
+        let id = ui.id().with("watch-actions-width");
+        ui.horizontal(|ui| {
+            let known: Option<f32> = ui.data(|data| data.get_temp(id));
+            if let Some(width) = known {
+                ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+            }
+            let width = ui
+                .scope(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.horizontal(|ui| {
+                        if icon_key(
+                            ui,
+                            &station,
+                            "Stop watching",
+                            egui::include_image!("../../../assets/icons/monitor-off.svg"),
+                        )
+                        .clicked()
+                        {
+                            self.apply(ViewerInput::StopWatching);
+                        }
+                        if icon_key(
+                            ui,
+                            &station,
+                            "Fullscreen. Or press F11, or double-click the video. Esc leaves.",
+                            egui::include_image!("../../../assets/icons/monitor-screenshot.svg"),
+                        )
+                        .clicked()
+                        {
+                            self.fullscreen_toggle = true;
+                        }
+                        if icon_key(
+                            ui,
+                            &station,
+                            "Mini player. Keep watching in a small window on top. Minimizing does the same.",
+                            egui::include_image!("../../../assets/icons/pip.svg"),
+                        )
+                        .clicked()
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
+                })
+                .response
+                .rect
+                .width();
+            ui.data_mut(|data| data.insert_temp(id, width));
+            if known.is_none_or(|old| (old - width).abs() > 0.5) {
+                ui.ctx().request_repaint();
+            }
+        });
+    }
+
+    /// The station's own screen: empty before Start, a copy of a captured frame while someone
+    /// is watching, and the pause note when capture is waiting for a viewer.
+    fn own_well(&mut self, ui: &mut egui::Ui) {
+        let station = station_of(ui);
+        let viewers = self.viewer_count;
+        let title = self
+            .ctrl
+            .broadcast
+            .as_ref()
+            .map(|broadcast| broadcast.source_name.clone());
+        let frame = if viewers > 0 {
+            self.ctrl
+                .broadcast
+                .as_ref()
+                .and_then(|broadcast| broadcast.encoder.take_preview())
+        } else {
+            None
+        };
+        if viewers == 0 {
+            // Drop the last copy so the next session cannot flash it.
+            self.preview = None;
+        } else if let Some(frame) = frame {
+            let previous = self.preview.take();
+            self.preview = Some(preview_texture(ui.ctx(), frame, previous));
+        }
+        let area = ui.available_rect_before_wrap();
+        ui.allocate_rect(area, Sense::hover());
+        let painter = ui.painter_at(area);
+        painter.rect_filled(area, 2.0, station.well);
+        let Some(title) = title else {
+            return;
+        };
+        if viewers == 0 {
+            painter.text(
+                area.center(),
+                egui::Align2::CENTER_CENTER,
+                "Capture paused until someone watches",
+                FontId::proportional(15.0),
+                station.stamp,
+            );
+            return;
+        }
+        let caption = "Preview · copy of a captured frame";
+        painter.text(
+            area.left_top() + vec2(12.0, 10.0),
+            egui::Align2::LEFT_TOP,
+            caption,
+            FontId::new(12.0, theme::condensed()),
+            station.stamp,
+        );
+        let picture = Rect::from_min_max(
+            area.left_top() + vec2(12.0, 32.0),
+            area.right_bottom() - vec2(12.0, 12.0),
+        );
+        if picture.width() <= 0.0 || picture.height() <= 0.0 {
+            return;
+        }
+        let bar = Rect::from_min_size(picture.left_top(), vec2(picture.width(), 28.0));
+        painter.rect_filled(bar, 0.0, station.title_bar);
+        painter.text(
+            bar.left_center() + vec2(10.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            truncate(&title, 48),
+            FontId::proportional(13.0),
+            station.title_ink,
+        );
+        let screen = Rect::from_min_max(bar.left_bottom(), picture.right_bottom());
+        if let Some(texture) = &self.preview {
+            let size = texture.size_vec2();
+            let scale = (screen.width() / size.x).min(screen.height() / size.y);
+            let rect = Rect::from_center_size(screen.center(), size * scale);
+            painter.image(
+                texture.id(),
+                rect,
+                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+    }
+
+    fn source_modal(&mut self, ctx: &egui::Context) {
+        // Apply stills that arrived before this paint, so the cards don't open empty.
+        self.thumbs.poll();
+        let station = theme::station(ctx.global_style().visuals.dark_mode);
+        let mut close = false;
+        let mut refresh = false;
+        let mut begin = false;
+        // Everything but the cards takes about 300 px. The cards give way on a short or narrow
+        // window, so Start broadcasting stays on screen.
+        let screen = ctx.content_rect();
+        let cards_height = (screen.height() - 300.0).clamp(120.0, 420.0);
+        let min_width = (screen.width() - 96.0).clamp(400.0, 820.0);
+        let response = egui::Modal::new(egui::Id::new("source-picker"))
+            .frame(
+                egui::Frame::NONE
+                    .fill(station.key)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(24)),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(min_width);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Source")
+                            .color(station.body)
+                            .font(FontId::new(22.0, theme::condensed())),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("×").size(22.0).color(station.muted),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                        if refresh_button(ui, station.muted)
+                            .on_hover_text("Look for windows again")
+                            .clicked()
+                        {
+                            refresh = true;
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .max_height(cards_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(12.0, 14.0);
+                        let width = ((ui.available_width() - 24.0) / 3.0).max(160.0);
+                        ui.horizontal_wrapped(|ui| {
+                            let count = self.sources.len();
+                            for index in 0..count {
+                                self.source_card(ui, &station, index, width);
+                            }
+                        });
+                    });
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    self.share_audio_toggle(ui);
+                    ui.add_space(16.0);
+                    let monitor = self
+                        .sources
+                        .get(self.selected)
+                        .and_then(audio_source)
+                        .is_some_and(|audio| matches!(audio, AudioSource::System { .. }));
+                    mute_apps::ui(
+                        ui,
+                        &self.ctrl.audio_apps,
+                        &self.muted_apps,
+                        &mut self.settings,
+                        &self.dir,
+                        monitor,
+                    );
+                });
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new("Quality")
+                        .color(station.muted)
+                        .font(FontId::new(13.0, theme::condensed())),
+                );
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for preset in Preset::ALL {
+                        self.preset_chip(ui, &station, preset);
+                    }
+                });
+                ui.add_space(16.0);
+                if column_key(ui, &station, "Start broadcasting").clicked() {
+                    begin = true;
+                }
+            });
+        if begin {
+            self.close_picker();
+            self.start_broadcast();
+        } else if close || response.should_close() {
+            self.close_picker();
+        } else if refresh {
+            self.refresh_sources();
+            self.thumbs.ensure(&self.sources);
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.port_input = self
+            .settings
+            .broadcast_port
+            .map(|port| port.to_string())
+            .unwrap_or_default();
+        self.settings_open = true;
+    }
+
+    /// The theme, and what settings.toml holds that has no control elsewhere: the debug
+    /// figures, the broadcast port and where the mini player opens.
+    fn settings_modal(&mut self, ctx: &egui::Context) {
+        let station = theme::station(ctx.global_style().visuals.dark_mode);
+        let width = (ctx.content_rect().width() - 96.0).clamp(300.0, 528.0);
+        let mut close = false;
+        let response = egui::Modal::new(egui::Id::new("settings"))
+            .frame(
+                egui::Frame::NONE
+                    .fill(station.key)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(24)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(width);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Settings")
+                            .color(station.body)
+                            .font(FontId::new(22.0, theme::condensed())),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("×").size(22.0).color(station.muted),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+                section_label(ui, &station, "Theme");
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+                    for palette in Palette::ALL {
+                        self.palette_card(ui, &station, palette);
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Appearance");
+                ui.horizontal(|ui| {
+                    for choice in ThemeChoice::ALL {
+                        let selected = self.settings.theme == choice;
+                        let hover = match choice {
+                            ThemeChoice::System => "Follows Windows",
+                            ThemeChoice::Dark => "Always the dark side",
+                            ThemeChoice::Light => "Always the light side",
+                        };
+                        if station_button(ui, &station, choice.label(), selected, 30.0, 14.0)
+                            .on_hover_text(hover)
+                            .clicked()
+                            && !selected
+                        {
+                            self.settings.theme = choice;
+                            self.save_settings();
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Stream");
+                let mut show = self.settings.show_stats;
+                if ui
+                    .checkbox(
+                        &mut show,
+                        RichText::new("Show debug figures").color(station.body),
+                    )
+                    .on_hover_text(
+                        "Codec, frame rate, bitrate and timings over a watched stream and \
+                         under the live line",
+                    )
+                    .changed()
+                {
+                    self.settings.show_stats = show;
+                    self.save_settings();
+                }
+                ui.add_space(12.0);
+                section_label(ui, &station, "Network");
+                let live = self.ctrl.broadcast.is_some();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Broadcast port").color(station.body));
+                    let field = ui
+                        .add_enabled(
+                            !live,
+                            egui::TextEdit::singleline(&mut self.port_input)
+                                .desired_width(72.0)
+                                .hint_text("any"),
+                        )
+                        .on_hover_text(
+                            "Kept for every broadcast, so connect strings and saved contacts \
+                             stay valid. Empty picks a free port.",
+                        )
+                        .on_disabled_hover_text("Stop broadcasting to change the port");
+                    match parse_port(&self.port_input) {
+                        Some(port) if field.changed() => {
+                            self.settings.broadcast_port = port;
+                            self.save_settings();
+                        }
+                        Some(_) => {}
+                        None => {
+                            ui.colored_label(ui.visuals().warn_fg_color, "Use 1 to 65535");
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Mini player");
+                let placed = self.settings.mini_player.is_some();
+                if ui
+                    .add_enabled(placed, egui::Button::new("Open it in the corner again"))
+                    .on_hover_text("Forgets where it was left; it opens in the corner next time")
+                    .on_disabled_hover_text("It already opens in the corner")
+                    .clicked()
+                {
+                    self.settings.mini_player = None;
+                    self.save_settings();
+                }
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Saved in {}",
+                        self.dir.join("settings.toml").display()
+                    ))
+                    .color(station.muted)
+                    .size(12.0),
+                );
+            });
+        if close || response.should_close() {
+            self.settings_open = false;
+        }
+    }
+
+    /// A card painted in the palette's own colors, on the side in use now.
+    fn palette_card(&mut self, ui: &mut egui::Ui, station: &Station, palette: Palette) {
+        let own = Station::of(palette, station.dark);
+        let selected = self.settings.palette == palette;
+        let (rect, response) = ui.allocate_exact_size(vec2(160.0, 72.0), Sense::click());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 4.0, own.housing);
+        painter.text(
+            rect.left_top() + vec2(10.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            palette.label(),
+            FontId::proportional(14.0),
+            own.body,
+        );
+        painter.text(
+            rect.left_top() + vec2(10.0, 27.0),
+            egui::Align2::LEFT_TOP,
+            palette.sides(),
+            FontId::new(12.0, theme::condensed()),
+            own.muted,
+        );
+        // A nameplate with its lamp, and the strong key, as the column shows them.
+        let row = rect.bottom() - 15.0;
+        let plate =
+            Rect::from_min_size(egui::pos2(rect.left() + 10.0, row - 6.0), vec2(40.0, 12.0));
+        painter.rect_filled(plate, 2.0, own.paper);
+        painter.circle_filled(plate.left_center() + vec2(7.0, 0.0), 2.5, own.lamp);
+        let key = Rect::from_min_size(egui::pos2(plate.right() + 8.0, row - 6.0), vec2(40.0, 12.0));
+        painter.rect_filled(key, 2.0, own.strong_fill);
+        let stroke = if selected {
+            station.selected_stroke()
+        } else if response.hovered() {
+            Stroke::new(1.0, station.body)
+        } else {
+            Stroke::new(1.0, own.line)
+        };
+        painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+        if response.clicked() && !selected {
+            self.settings.palette = palette;
+            self.save_settings();
+        }
+    }
+
+    fn source_card(&mut self, ui: &mut egui::Ui, station: &Station, index: usize, width: f32) {
+        let Some(source) = self.sources.get(index).cloned() else {
+            return;
+        };
+        let (title, detail) = source_caption(&source);
+        let selected = index == self.selected;
+        let id = source.id();
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 172.0), Sense::click());
+        let painter = ui.painter();
+        if response.hovered() {
+            painter.rect_filled(rect, 3.0, station.key_hover);
+        }
+        let image = Rect::from_min_size(rect.min, vec2(rect.width(), 112.0));
+        painter.rect_filled(image, 2.0, station.well);
+        if let Some(texture) = self.thumbs.texture(ui.ctx(), &id) {
+            let size = texture.size_vec2();
+            let scale = (image.width() / size.x).min(image.height() / size.y);
+            let fitted = Rect::from_center_size(image.center(), size * scale);
+            painter.image(
+                texture.id(),
+                fitted,
+                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let stroke = if selected {
+            station.selected_stroke()
+        } else if response.hovered() {
+            Stroke::new(1.0, station.line)
+        } else {
+            Stroke::NONE
+        };
+        if stroke != Stroke::NONE {
+            painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+        }
+        painter.text(
+            image.left_bottom() + vec2(2.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            truncate(&title, 28),
+            FontId::proportional(14.0),
+            station.body,
+        );
+        if !detail.is_empty() {
+            painter.text(
+                image.left_bottom() + vec2(2.0, 24.0),
+                egui::Align2::LEFT_TOP,
+                truncate(&detail, 32),
+                FontId::new(12.0, theme::condensed()),
+                station.muted,
+            );
+        }
+        if response.clicked() {
+            self.selected = index;
+        }
+    }
+
+    fn preset_chip(&mut self, ui: &mut egui::Ui, station: &Station, preset: Preset) {
+        let selected = self.preset == preset;
+        let (label, note) = preset_lines(preset);
+        let text = match note {
+            Some(note) => format!("{label}\n{note}"),
+            None => label.to_string(),
+        };
+        let response = station_button(ui, station, &text, selected, 36.0, 14.0);
+        let mut hint = format!(
+            "Up to {}×{}, at most {} Mbps of upload.",
+            preset.max_width,
+            preset.max_height,
+            preset.bitrate_bps / 1_000_000,
+        );
+        if preset == Preset::INTERNET {
+            hint.push_str(" Recommended for Radmin VPN, Hamachi and other internet links.");
+        }
+        if preset.fps >= 60 && self.h265_encoder.is_none() {
+            hint.push_str(
+                " No H.265 encoder was found on the graphics card, so 60 fps uses H.264 on the \
+                 CPU and may not keep up.",
+            );
+        }
+        if response.on_hover_text(hint).clicked() && !selected {
+            self.preset = preset;
+            self.settings.preset = Some(preset.id.into());
+            self.save_settings();
+        }
+    }
 }
 
 impl eframe::App for App {
     /// Also runs while the main window is minimized, when `ui` doesn't: that's when the mini
     /// player has to appear.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.thumbs.poll();
         let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
         if !minimized {
             return;
@@ -1063,51 +1682,48 @@ impl eframe::App for App {
             return;
         }
 
-        egui::Panel::top("identity").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                self.identity_ui(ui);
-                self.update_note_ui(ui);
-            });
-        });
+        theme::apply(ui.ctx(), self.settings.palette, self.settings.theme);
+        let live = self.ctrl.broadcast.is_some();
+        // Source and quality stay as they were when the line opened.
+        if live && self.picker {
+            self.close_picker();
+        }
+        if live && self.viewer_count > 0 && matches!(self.viewer, ViewerState::Idle) {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
+        let frame = housing_frame(ui);
+
+        if live {
+            egui::Panel::bottom("live-bar")
+                .frame(frame)
+                .show(ui, |ui| self.live_bar(ui));
+        }
 
         egui::Panel::left("controls")
             .resizable(false)
-            .exact_size(320.0)
+            .exact_size(COLUMN_WIDTH)
+            .frame(frame)
             .show(ui, |ui| {
-                ui.add_space(8.0);
-                self.broadcast_ui(ui);
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(8.0);
-                self.watch_ui(ui);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.station_column(ui));
             });
 
-        egui::CentralPanel::default().show(ui, |ui| match self.viewer.clone() {
-            ViewerState::Streaming { .. } => {
-                let overlay = self.watch_overlay();
-                if self
-                    .video
-                    .lock()
-                    .unwrap()
-                    .ui(ui, &self.ctrl.video, &overlay)
-                    .double_clicked()
-                {
-                    self.fullscreen_toggle = true;
-                }
-            }
-            ViewerState::Connecting { peer } => {
-                VideoView::placeholder(ui, &format!("Connecting to {}…", peer.name));
-            }
-            ViewerState::Disconnected { peer, reason } => {
-                VideoView::placeholder(ui, &format!("{}: {reason}", peer.name));
-            }
-            ViewerState::Idle => VideoView::placeholder(ui, "Pick a broadcaster to watch"),
-        });
+        egui::CentralPanel::default()
+            .frame(frame)
+            .show(ui, |ui| self.well(ui));
+
+        if self.picker {
+            self.source_modal(ui.ctx());
+        }
+        if self.settings_open {
+            self.settings_modal(ui.ctx());
+        }
         self.update_fullscreen(&ctx, fullscreen);
     }
 }
 
-/// "🗗 Mini player": minimizing opens the mini player.
+/// "Mini player": minimizing opens the mini player.
 fn mini_player_button(ui: &mut egui::Ui) {
     if ui
         .button("🗗 Mini player")
@@ -1154,6 +1770,328 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+fn station_of(ui: &egui::Ui) -> Station {
+    theme::station(ui.visuals().dark_mode)
+}
+
+fn section_label(ui: &mut egui::Ui, station: &Station, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .color(station.muted)
+            .font(FontId::new(13.0, theme::condensed())),
+    );
+    ui.add_space(4.0);
+}
+
+/// The settings window's port field: empty picks a free port, otherwise 1 to 65535.
+/// `None` when the text is not a port.
+fn parse_port(text: &str) -> Option<Option<u16>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(None);
+    }
+    text.parse::<u16>().ok().filter(|port| *port != 0).map(Some)
+}
+
+fn housing_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(ui.visuals().panel_fill)
+        .inner_margin(egui::Margin::same(12))
+}
+
+fn key_colors(station: &Station, strong: bool) -> (Color32, Color32) {
+    if strong {
+        (station.strong_fill, station.strong_ink)
+    } else {
+        (station.key, station.body)
+    }
+}
+
+fn station_key<'a>(
+    station: &Station,
+    text: &'a str,
+    strong: bool,
+    min_height: f32,
+    font_size: f32,
+) -> egui::Button<'a> {
+    let (fill, ink) = key_colors(station, strong);
+    let stroke = if strong {
+        Stroke::NONE
+    } else {
+        Stroke::new(station.line_w, station.line)
+    };
+    egui::Button::new(
+        RichText::new(text)
+            .color(ink)
+            .font(FontId::new(font_size, theme::condensed())),
+    )
+    .fill(fill)
+    .stroke(stroke)
+    .corner_radius(egui::CornerRadius::same(3))
+    .min_size(vec2(0.0, min_height))
+}
+
+fn station_button(
+    ui: &mut egui::Ui,
+    station: &Station,
+    text: &str,
+    strong: bool,
+    min_height: f32,
+    font_size: f32,
+) -> egui::Response {
+    ui.add(station_key(station, text, strong, min_height, font_size))
+}
+
+/// The settings key: a gear.
+fn gear_button(ui: &mut egui::Ui, station: &Station) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+    let behind = if response.hovered() {
+        station.key_hover
+    } else {
+        station.housing
+    };
+    if response.hovered() {
+        ui.painter().circle_filled(rect.center(), 12.0, behind);
+    }
+    paint_gear(ui.painter(), rect.center(), station.body, behind);
+    response
+}
+
+fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32, behind: Color32) {
+    let tooth = Stroke::new(3.0, color);
+    for i in 0..8 {
+        let angle = i as f32 * std::f32::consts::TAU / 8.0;
+        let dir = vec2(angle.cos(), angle.sin());
+        painter.line_segment([center + dir * 5.0, center + dir * 8.5], tooth);
+    }
+    painter.circle_filled(center, 6.0, color);
+    painter.circle_filled(center, 2.5, behind);
+}
+
+fn icon_key(
+    ui: &mut egui::Ui,
+    station: &Station,
+    hover: &str,
+    source: egui::ImageSource<'static>,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
+    let fill = if response.hovered() {
+        station.key_hover
+    } else {
+        station.key
+    };
+    paint_key(ui, rect, fill, station.line, station.line_w, 3.0);
+    let icon = Rect::from_center_size(rect.center(), vec2(22.0, 22.0));
+    egui::Image::new(source)
+        .tint(station.body)
+        .paint_at(ui, icon);
+    response.on_hover_text(hover)
+}
+
+/// A circular arrow, same weight as the close mark beside it.
+fn refresh_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+    let color = if response.hovered() {
+        color.linear_multiply(1.35)
+    } else {
+        color
+    };
+    let center = rect.center();
+    let radius = 6.5;
+    let stroke = Stroke::new(1.7, color);
+    let start = -0.5_f32;
+    let end = std::f32::consts::TAU - 1.05;
+    let steps = 20;
+    let points = (0..=steps)
+        .map(|i| {
+            let t = start + (end - start) * (i as f32 / steps as f32);
+            center + vec2(radius * t.cos(), radius * t.sin())
+        })
+        .collect();
+    let painter = ui.painter();
+    painter.add(egui::Shape::line(points, stroke));
+    let forward = vec2(-end.sin(), end.cos());
+    let side = vec2(-forward.y, forward.x);
+    let tip = center + vec2(radius * end.cos(), radius * end.sin()) + forward * 2.2;
+    let back = tip - forward * 5.0;
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, back + side * 3.1, back - side * 3.1],
+        color,
+        Stroke::NONE,
+    ));
+    response
+}
+
+/// The column's strong key, as wide as its label. Start opens the picker; Stop sits in the same
+/// place once live.
+fn column_key(ui: &mut egui::Ui, station: &Station, label: &str) -> egui::Response {
+    let font = FontId::new(15.0, theme::condensed());
+    let text_w = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font.clone(), station.strong_ink)
+        .size()
+        .x;
+    let width = (text_w + 36.0).min(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), Sense::click());
+    let fill = if response.hovered() {
+        station.strong_fill.linear_multiply(0.92)
+    } else {
+        station.strong_fill
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        font,
+        station.strong_ink,
+    );
+    response
+}
+
+fn paint_key(ui: &egui::Ui, rect: Rect, fill: Color32, line: Color32, width: f32, radius: f32) {
+    ui.painter().rect_filled(rect, radius, fill);
+    if width > 0.0 {
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            Stroke::new(width, line),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// The word after the ID on a nameplate. Every mark but `Saved` is someone broadcasting now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlateMark {
+    Live,
+    /// A saved contact who is not broadcasting: a ring instead of a filled dot.
+    Saved,
+    /// Not the contact saved under this name: the ID changed.
+    ChangedId,
+    /// Another broadcaster uses the same name.
+    SameName,
+}
+
+/// A paper nameplate. Someone on air gets a larger name and a lamp for the dot. A name too long
+/// for the column ends in "…" before the ID.
+fn plate(
+    ui: &mut egui::Ui,
+    station: &Station,
+    name: &str,
+    id: &str,
+    mark: PlateMark,
+    selected: bool,
+) -> egui::Response {
+    let on_air = mark != PlateMark::Saved;
+    let (word, word_color) = match mark {
+        PlateMark::Live => ("Live", station.lamp),
+        PlateMark::Saved => ("Saved", station.ink),
+        PlateMark::ChangedId => ("⚠ Check ID", ui.visuals().error_fg_color),
+        PlateMark::SameName => ("⚠ Check ID", ui.visuals().warn_fg_color),
+    };
+    let label_font = FontId::new(12.0, theme::condensed());
+    let id_galley = ui
+        .painter()
+        .layout_no_wrap(id.to_string(), label_font.clone(), station.ink);
+    let word_galley = ui
+        .painter()
+        .layout_no_wrap(word.to_string(), label_font, word_color);
+    let right_w = id_galley.size().x + 6.0 + word_galley.size().x;
+    let chrome = 12.0 + 8.0 + 12.0 + 12.0 + right_w + 12.0;
+    let mut name_job = egui::text::LayoutJob::simple_singleline(
+        truncate(name, if on_air { 28 } else { 22 }),
+        FontId::proportional(if on_air { 14.0 } else { 13.0 }),
+        station.ink,
+    );
+    name_job.wrap =
+        egui::text::TextWrapping::truncate_at_width((ui.available_width() - chrome).max(0.0));
+    let name_galley = ui.painter().layout_job(name_job);
+    let width = (chrome + name_galley.size().x).min(ui.available_width());
+    let height = if on_air { 30.0 } else { 28.0 };
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let stroke = if selected { 2.0 } else { station.line_w };
+    let line = if selected { station.ink } else { station.line };
+    paint_key(ui, rect, station.paper, line, stroke, 2.0);
+    let painter = ui.painter();
+    let dot = rect.left_center() + vec2(16.0, 0.0);
+    if on_air {
+        painter.circle_filled(dot, 4.0, station.lamp);
+    } else {
+        painter.circle_stroke(dot, 3.5, Stroke::new(1.5, station.ink));
+    }
+    let middle = |size: egui::Vec2, x: f32| egui::pos2(x, rect.center().y - size.y / 2.0);
+    let word_x = rect.right() - 10.0 - word_galley.size().x;
+    let id_x = word_x - 6.0 - id_galley.size().x;
+    painter.galley(
+        middle(name_galley.size(), dot.x + 14.0),
+        name_galley,
+        station.ink,
+    );
+    painter.galley(middle(id_galley.size(), id_x), id_galley, station.ink);
+    painter.galley(middle(word_galley.size(), word_x), word_galley, word_color);
+    response
+}
+
+fn preview_texture(
+    ctx: &egui::Context,
+    frame: PreviewFrame,
+    previous: Option<TextureHandle>,
+) -> TextureHandle {
+    let image = ColorImage::from_rgba_unmultiplied([frame.width, frame.height], &frame.rgba);
+    match previous {
+        Some(mut texture) => {
+            texture.set(image, TextureOptions::LINEAR);
+            texture
+        }
+        None => ctx.load_texture("own-preview", image, TextureOptions::LINEAR),
+    }
+}
+
+fn preset_lines(preset: Preset) -> (&'static str, Option<&'static str>) {
+    if preset == Preset::INTERNET {
+        ("720p · 24 fps", Some("Internet / VPN"))
+    } else {
+        (preset.name, None)
+    }
+}
+
+fn preset_short(preset: Preset) -> String {
+    match preset_lines(preset) {
+        (label, Some(note)) => format!("{label} · {note}"),
+        (label, None) => label.to_string(),
+    }
+}
+
+/// Title and the smaller line under a source card.
+fn source_caption(source: &Source) -> (String, String) {
+    match source.kind {
+        SourceKind::TestPattern => ("Test pattern".to_string(), "built in".to_string()),
+        SourceKind::Monitor => monitor_caption(&source.name),
+        SourceKind::Window => window_caption(&source.name),
+    }
+}
+
+fn monitor_caption(name: &str) -> (String, String) {
+    let (head, rest) = name.split_once('(').unwrap_or((name, ""));
+    let title = head.split(':').next().unwrap_or(head).trim().to_string();
+    let subtitle = rest
+        .replace(')', "")
+        .replace('x', "×")
+        .trim()
+        .trim_matches(',')
+        .trim()
+        .to_string();
+    (title, subtitle)
+}
+
+fn window_caption(name: &str) -> (String, String) {
+    match name.rsplit_once(" [") {
+        Some((title, process)) => (title.to_string(), process.trim_end_matches(']').to_string()),
+        None => (name.to_string(), String::new()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1176,5 +2114,30 @@ mod tests {
     fn truncates_on_char_boundaries() {
         assert_eq!(truncate("héllo wörld", 5), "héll…");
         assert_eq!(truncate("short", 10), "short");
+    }
+
+    #[test]
+    fn port_field_takes_empty_or_a_real_port() {
+        assert_eq!(parse_port(""), Some(None));
+        assert_eq!(parse_port(" 50123 "), Some(Some(50123)));
+        assert_eq!(parse_port("0"), None);
+        assert_eq!(parse_port("70000"), None);
+        assert_eq!(parse_port("port"), None);
+    }
+
+    #[test]
+    fn source_captions_split_the_list_names() {
+        let (title, detail) = monitor_caption("Monitor 1: DELL (1920x1080), primary");
+        assert_eq!(title, "Monitor 1");
+        assert_eq!(detail, "1920×1080, primary");
+        let (title, detail) = window_caption("League of Legends [League of Legends.exe]");
+        assert_eq!(title, "League of Legends");
+        assert_eq!(detail, "League of Legends.exe");
+        assert_eq!(preset_lines(Preset::INTERNET).1, Some("Internet / VPN"));
+        assert_eq!(preset_short(Preset::P1080), "1080p · 30 fps");
+        assert_eq!(
+            preset_short(Preset::INTERNET),
+            "720p · 24 fps · Internet / VPN"
+        );
     }
 }

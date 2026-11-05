@@ -317,7 +317,7 @@ mod tests {
         }
         let frames = out.len() / CHANNELS;
         assert!((44_099..=44_101).contains(&frames), "{frames} frames");
-        for (i, f) in out.chunks_exact(CHANNELS).enumerate().skip(1) {
+        for (i, f) in out.as_chunks::<CHANNELS>().0.iter().enumerate().skip(1) {
             let expected = i as f32 * 48_000.0 / 44_100.0 / 48_000.0;
             assert!(
                 (f[0] - expected).abs() < 1e-4,

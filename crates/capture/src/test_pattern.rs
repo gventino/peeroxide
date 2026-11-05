@@ -38,6 +38,12 @@ impl Drop for Guard {
     }
 }
 
+/// One still of the pattern, for a picker card. No thread and no flash: the bars are enough
+/// to recognize it.
+pub(crate) fn still() -> Frame {
+    render(&background(), 0)
+}
+
 pub(crate) fn start(slot: Arc<FrameSlot>, fps: u32) -> Guard {
     let stop = Arc::new(AtomicBool::new(false));
     let interval = Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
@@ -136,7 +142,7 @@ fn fill(data: &mut [u8], x: u32, y: u32, w: u32, h: u32, px: [u8; 4]) {
     for row in y..(y + h).min(HEIGHT) {
         let start = ((row * WIDTH + x) * 4) as usize;
         let end = ((row * WIDTH + (x + w).min(WIDTH)) * 4) as usize;
-        for chunk in data[start..end].chunks_exact_mut(4) {
+        for chunk in data[start..end].as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&px);
         }
     }

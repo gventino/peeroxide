@@ -25,6 +25,8 @@ struct TestServer {
     keyframe_requests: Arc<AtomicUsize>,
     publisher: JoinHandle<()>,
     audio_publisher: Option<JoinHandle<()>>,
+    /// Video frames published so far.
+    video_sent: Arc<AtomicU64>,
     /// Audio packets published so far.
     audio_sent: Arc<AtomicU64>,
 }
@@ -75,10 +77,12 @@ impl TestServer {
             )
             .unwrap(),
         );
+        let video_sent = Arc::new(AtomicU64::new(0));
         let publisher = tokio::spawn({
             let server = server.clone();
+            let video_sent = video_sent.clone();
             async move {
-                for seq in 0.. {
+                for seq in 0..=u64::MAX {
                     server.publish(VideoFrame {
                         seq,
                         capture_time_us: 0,
@@ -86,6 +90,7 @@ impl TestServer {
                         codec: VideoCodec::H265,
                         data: Bytes::from(vec![tag; frame_size]),
                     });
+                    video_sent.store(seq.saturating_add(1), SeqCst);
                     tokio::time::sleep(interval).await;
                 }
             }
@@ -116,6 +121,7 @@ impl TestServer {
             keyframe_requests,
             publisher,
             audio_publisher,
+            video_sent,
             audio_sent,
         }
     }
@@ -328,19 +334,30 @@ async fn other_protocol_versions_are_refused() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lagging_viewer_skips_ahead_to_a_keyframe() {
+    // 64 KB every millisecond. The stall waits until far more than the stream's flow-control
+    // window and the 30-frame broadcaster buffer have been published.
     let ts = TestServer::start(8, 64 * 1024, Duration::from_millis(1), 1);
     let client = ViewerClient::new().unwrap();
     let stalled = Arc::new(AtomicBool::new(false));
+    let sent = ts.video_sent.clone();
     let mut v = TestViewer::watch_with(
         &client,
         ts.addr(),
         ts.identity.fingerprint(),
         {
             let stalled = stalled.clone();
-            move |_| {
-                // Simulates a viewer that stops reading for a while.
+            move |f| {
+                // block_in_place keeps the publisher and QUIC keep-alives running on another
+                // worker while this reader holds the first frame.
                 if !stalled.swap(true, SeqCst) {
-                    std::thread::sleep(Duration::from_millis(1500));
+                    tokio::task::block_in_place(|| {
+                        let started = std::time::Instant::now();
+                        while sent.load(SeqCst) < f.seq.saturating_add(200)
+                            && started.elapsed() < WAIT
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    });
                 }
             }
         },
@@ -348,18 +365,22 @@ async fn lagging_viewer_skips_ahead_to_a_keyframe() {
     );
 
     let mut prev = v.frame().await;
-    loop {
-        let f = v.frame().await;
-        if f.seq != prev.seq + 1 {
-            assert!(
-                f.keyframe,
-                "after skipping {} frames the next one must be a keyframe",
-                f.seq - prev.seq - 1
-            );
-            break;
+    timeout(WAIT, async {
+        loop {
+            let f = v.frame().await;
+            if f.seq != prev.seq + 1 {
+                assert!(
+                    f.keyframe,
+                    "after skipping {} frames the next one must be a keyframe",
+                    f.seq - prev.seq - 1
+                );
+                break;
+            }
+            prev = f;
         }
-        prev = f;
-    }
+    })
+    .await
+    .expect("viewer never skipped ahead to a keyframe");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -576,7 +597,7 @@ async fn raw_broadcaster(odd: Vec<u8>) -> (SocketAddr, Fingerprint, JoinHandle<(
         write_stream_kind(&mut video, StreamKind::Video)
             .await
             .unwrap();
-        for seq in 0.. {
+        for seq in 0..=u64::MAX {
             let frame = VideoFrame {
                 seq,
                 capture_time_us: 0,

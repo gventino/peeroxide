@@ -1,5 +1,6 @@
-//! The "Mute apps" checklist: which apps a shared monitor's sound leaves out. Shown before and
-//! during a broadcast; changes apply within a second and are remembered per app.
+//! The "Mute apps" dropdown: which apps a shared monitor's sound leaves out. It sits in the
+//! source picker, above Quality, and under the live line while a monitor's sound is shared.
+//! Changes apply within a second and are remembered per app.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -61,56 +62,61 @@ pub fn except_text(apps: &[AudioApp], muted: &MutedApps) -> String {
     }
 }
 
-/// Draws the checklist; a change is applied to `muted` and saved with the settings.
+/// Dropdown of apps to leave out of a monitor share. `applies` is false for a window share,
+/// which only captures that one app. A change is applied to `muted` and saved.
 pub fn ui(
     ui: &mut egui::Ui,
     list: &AppList,
     muted: &MutedApps,
     settings: &mut Settings,
     dir: &Path,
+    applies: bool,
 ) {
     let apps = list.apps();
     let rows = rows(&apps, muted, &settings.audio_apps);
     let silenced = rows.iter().filter(|r| r.muted && !r.absent).count();
     let title = match silenced {
         0 => "Mute apps".to_string(),
-        n => format!("Mute apps · {n} muted"),
+        n => format!("Mute apps · {n}"),
     };
     let mut changed = None;
-    egui::CollapsingHeader::new(title)
-        .id_salt("mute-apps")
-        .default_open(true)
-        .show(ui, |ui| {
+    egui::ComboBox::from_id_salt("mute-apps")
+        .selected_text(title)
+        .width(220.0)
+        .height(240.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            ui.set_min_width(260.0);
             if rows.is_empty() {
                 ui.weak("No app is playing sound right now.");
             }
-            egui::ScrollArea::vertical()
-                .max_height(160.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for row in &rows {
-                        let mut text = RichText::new(&row.name);
-                        if row.absent {
-                            text = RichText::new(format!("{} (not running)", row.name)).weak();
-                        }
-                        let mut value = row.muted;
-                        let mut response = ui.checkbox(&mut value, text);
-                        if row.voice_chat {
-                            response = response.on_hover_text(format!(
-                                "{}: voice chat, muted unless you unmute it",
-                                row.key
-                            ));
-                        } else {
-                            response = response.on_hover_text(&row.key);
-                        }
-                        if response.changed() {
-                            changed = Some((row.key.clone(), value));
-                        }
-                    }
-                });
-            ui.weak("Viewers don't hear muted apps; you still do.");
-            if silenced > 0 {
-                ui.weak("Windows notification sounds aren't shared while an app is muted.");
+            for row in &rows {
+                let mut text = RichText::new(&row.name);
+                if row.absent {
+                    text = RichText::new(format!("{} (not running)", row.name)).weak();
+                }
+                let mut value = row.muted;
+                let mut response = ui.checkbox(&mut value, text);
+                if row.voice_chat {
+                    response = response.on_hover_text(format!(
+                        "{}: voice chat, muted unless you unmute it",
+                        row.key
+                    ));
+                } else {
+                    response = response.on_hover_text(&row.key);
+                }
+                if response.changed() {
+                    changed = Some((row.key.clone(), value));
+                }
+            }
+            ui.separator();
+            if applies {
+                ui.weak("Viewers don't hear muted apps; you still do.");
+                if silenced > 0 {
+                    ui.weak("Windows notification sounds aren't shared while an app is muted.");
+                }
+            } else {
+                ui.weak("This share is one window. Mute apps applies when you share a monitor.");
             }
         });
     if let Some((key, value)) = changed {
