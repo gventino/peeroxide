@@ -56,6 +56,9 @@ pub struct Settings {
     pub mini_player: Option<[i32; 4]>,
     /// Station palette. Missing in older files, which follow the system theme.
     pub theme: ThemeChoice,
+    /// Debug figures: codec, frame rate, bitrate and timings over a watched stream and under
+    /// the live line. Off unless turned on in this file.
+    pub show_stats: bool,
 }
 
 impl Settings {
@@ -106,6 +109,7 @@ mod tests {
             audio_apps: BTreeMap::from([("discord.exe".into(), false), ("game.exe".into(), true)]),
             mini_player: Some([1504, 791, 400, 225]),
             theme: ThemeChoice::Dark,
+            show_stats: true,
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
@@ -135,6 +139,7 @@ mod tests {
             "the mini player opens in its default corner"
         );
         assert_eq!(s.theme, ThemeChoice::System);
+        assert!(!s.show_stats, "the debug figures stay hidden");
         assert_eq!(s.volume(), 1.0);
         let loud = Settings {
             volume: Some(250),

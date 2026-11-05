@@ -195,15 +195,6 @@ impl App {
 
     fn identity_ui(&mut self, ui: &mut egui::Ui) {
         let station = station_of(ui);
-        ui.add(
-            egui::Image::from_bytes("bytes://pier", include_bytes!("../../../assets/icon.png"))
-                .fit_to_exact_size(vec2(32.0, 32.0)),
-        );
-        ui.label(
-            RichText::new("Peeroxide")
-                .color(station.body)
-                .font(FontId::new(22.0, theme::condensed())),
-        );
         // A `horizontal` inside right_to_left runs right to left too, so the name and the update
         // note add their parts last to first.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -448,8 +439,6 @@ impl App {
 
     fn setup_column(&mut self, ui: &mut egui::Ui) {
         let station = station_of(ui);
-        lamp(ui, &station, false);
-        ui.add_space(8.0);
         if column_key(ui, &station, "Start broadcasting")
             .on_hover_text("Choose a window and quality")
             .clicked()
@@ -461,8 +450,9 @@ impl App {
     fn live_signal(&mut self, ui: &mut egui::Ui) {
         let station = station_of(ui);
         let viewers = self.viewer_count;
+        let show_stats = self.settings.show_stats;
         let Some(signal) = self.ctrl.broadcast.as_ref().map(|broadcast| {
-            let stats_line = (viewers > 0).then(|| {
+            let stats_line = (viewers > 0 && show_stats).then(|| {
                 let mut stats = broadcast.encoder.stats.lock().unwrap();
                 let rates = stats.meter.rates();
                 let size = stats
@@ -515,8 +505,6 @@ impl App {
             return;
         };
         let (name, stats_line, audio, monitor_audio, note) = signal;
-        lamp(ui, &station, true);
-        ui.add_space(8.0);
         if column_key(ui, &station, "Stop broadcasting").clicked() {
             self.ctrl.stop_broadcast(StopReason::Stopped);
             self.viewer_count = 0;
@@ -540,7 +528,7 @@ impl App {
                     .color(station.muted)
                     .font(FontId::new(13.0, theme::condensed())),
             );
-        } else {
+        } else if viewers == 0 {
             ui.label(RichText::new("Capture paused until someone watches").color(station.muted));
         }
         if let Some(audio) = audio {
@@ -1090,7 +1078,11 @@ impl App {
     fn well(&mut self, ui: &mut egui::Ui) {
         match self.viewer.clone() {
             ViewerState::Streaming { .. } => {
-                let overlay = self.watch_overlay();
+                let overlay = if self.settings.show_stats {
+                    self.watch_overlay()
+                } else {
+                    String::new()
+                };
                 let bar_h = 40.0;
                 let gap = 10.0;
                 let video_h = (ui.available_height() - bar_h - gap).max(1.0);
@@ -1750,9 +1742,17 @@ fn refresh_button(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     response
 }
 
-/// The column's strong key. Start opens the picker; Stop sits in the same place once live.
+/// The column's strong key, as wide as its label. Start opens the picker; Stop sits in the same
+/// place once live.
 fn column_key(ui: &mut egui::Ui, station: &Station, label: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
+    let font = FontId::new(15.0, theme::condensed());
+    let text_w = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font.clone(), station.strong_ink)
+        .size()
+        .x;
+    let width = (text_w + 36.0).min(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), Sense::click());
     let fill = if response.hovered() {
         station.strong_fill.linear_multiply(0.92)
     } else {
@@ -1763,7 +1763,7 @@ fn column_key(ui: &mut egui::Ui, station: &Station, label: &str) -> egui::Respon
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        FontId::new(18.0, theme::condensed()),
+        font,
         station.strong_ink,
     );
     response
@@ -1777,24 +1777,6 @@ fn paint_key(ui: &egui::Ui, rect: Rect, fill: Color32, line: Color32, width: f32
             radius,
             Stroke::new(width, line),
             egui::StrokeKind::Inside,
-        );
-    }
-}
-
-fn lamp(ui: &mut egui::Ui, station: &Station, on: bool) {
-    let diameter = if on { 44.0 } else { 28.0 };
-    let (rect, _) = ui.allocate_exact_size(vec2(diameter, diameter), Sense::hover());
-    let center = rect.center();
-    if on {
-        ui.painter()
-            .circle_filled(center, diameter * 0.5, station.lamp);
-    } else {
-        ui.painter()
-            .circle_filled(center, diameter * 0.5 - 1.0, station.lamp_off);
-        ui.painter().circle_stroke(
-            center,
-            diameter * 0.5 - 1.0,
-            Stroke::new(1.5, station.lamp_off_line),
         );
     }
 }
@@ -1839,14 +1821,14 @@ fn plate(
     let chrome = 12.0 + 8.0 + 12.0 + 12.0 + right_w + 12.0;
     let mut name_job = egui::text::LayoutJob::simple_singleline(
         truncate(name, if on_air { 28 } else { 22 }),
-        FontId::proportional(if on_air { 16.0 } else { 14.0 }),
+        FontId::proportional(if on_air { 14.0 } else { 13.0 }),
         station.ink,
     );
     name_job.wrap =
         egui::text::TextWrapping::truncate_at_width((ui.available_width() - chrome).max(0.0));
     let name_galley = ui.painter().layout_job(name_job);
     let width = (chrome + name_galley.size().x).min(ui.available_width());
-    let height = if on_air { 40.0 } else { 34.0 };
+    let height = if on_air { 30.0 } else { 28.0 };
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let stroke = if selected { 2.0 } else { station.line_w };
     let line = if selected { station.ink } else { station.line };
@@ -1854,9 +1836,9 @@ fn plate(
     let painter = ui.painter();
     let dot = rect.left_center() + vec2(16.0, 0.0);
     if on_air {
-        painter.circle_filled(dot, 5.0, station.lamp);
+        painter.circle_filled(dot, 4.0, station.lamp);
     } else {
-        painter.circle_stroke(dot, 4.5, Stroke::new(1.5, station.ink));
+        painter.circle_stroke(dot, 3.5, Stroke::new(1.5, station.ink));
     }
     let middle = |size: egui::Vec2, x: f32| egui::pos2(x, rect.center().y - size.y / 2.0);
     let word_x = rect.right() - 10.0 - word_galley.size().x;
