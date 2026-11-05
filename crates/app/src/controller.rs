@@ -10,7 +10,7 @@ use eframe::egui;
 use peeroxide_audio::{AudioSource, MutedApps, OutputControl};
 use peeroxide_capture::Source;
 use peeroxide_codec::{Codec, Preset};
-use peeroxide_discovery::{Discovery, Peer};
+use peeroxide_discovery::{Discovery, LOOKUP_PORT, Lookup, Peer, Responder};
 use peeroxide_net::{
     BroadcastServer, Fingerprint, Identity, ServerOptions, SessionEvent, SessionHandle, SessionId,
     StopReason, ViewerClient,
@@ -87,7 +87,10 @@ pub enum Event {
         error: String,
     },
     Session(SessionId, SessionEvent),
+    /// Broadcasters announcing themselves on mDNS.
     Peers(Vec<Peer>),
+    /// Broadcasters answering lookups (saved contacts, the tailnet).
+    Found(Vec<Peer>),
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +121,8 @@ pub struct Broadcast {
     pub audio_note: Option<String>,
     server: Arc<BroadcastServer>,
     viewers_task: JoinHandle<()>,
+    /// Answers lookups from where mDNS doesn't reach, while broadcasting.
+    responder: Option<Responder>,
 }
 
 pub struct Watching {
@@ -141,6 +146,7 @@ pub struct Controller {
     pub watching: Option<Watching>,
     discovery: Option<Discovery>,
     pub discovery_error: Option<String>,
+    lookup: Option<Lookup>,
     /// The apps playing sound, for the "Mute apps" checklist.
     pub audio_apps: AppList,
     /// Whether the mini player is open, so new frames repaint it too.
@@ -149,9 +155,11 @@ pub struct Controller {
 }
 
 impl Controller {
+    /// With `tailscale`, the devices of this computer's tailnet are asked whether they broadcast.
     pub fn new(
         identity: Identity,
         display_name: String,
+        tailscale: bool,
         ctx: egui::Context,
     ) -> anyhow::Result<Self> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -183,11 +191,13 @@ impl Controller {
             watching: None,
             discovery: None,
             discovery_error: None,
+            lookup: None,
             audio_apps,
             mini_open: Arc::default(),
             generation: 0,
         };
         ctrl.start_discovery();
+        ctrl.start_lookup(tailscale);
         Ok(ctrl)
     }
 
@@ -203,6 +213,32 @@ impl Controller {
                 tracing::warn!("discovery unavailable: {e:#}");
                 self.discovery_error = Some(format!("Discovery unavailable: {e:#}"));
             }
+        }
+    }
+
+    /// Lookups find broadcasters where multicast doesn't reach; mDNS goes on as before.
+    fn start_lookup(&mut self, tailscale: bool) {
+        let emit = self.emitter();
+        let fingerprint = self.identity.fingerprint().to_hex();
+        match Lookup::start(&fingerprint, tailscale, move |peers| {
+            emit(Event::Found(peers))
+        }) {
+            Ok(l) => self.lookup = Some(l),
+            Err(e) => tracing::warn!("lookups unavailable: {e:#}"),
+        }
+    }
+
+    /// The addresses of saved contacts, asked whether they are broadcasting.
+    pub fn set_lookup_contacts(&self, ips: Vec<IpAddr>) {
+        if let Some(l) = &self.lookup {
+            l.set_contacts(ips);
+        }
+    }
+
+    /// Whether the devices of this computer's tailnet are asked whether they broadcast.
+    pub fn set_tailscale(&self, enabled: bool) {
+        if let Some(l) = &self.lookup {
+            l.set_tailscale(enabled);
         }
     }
 
@@ -338,6 +374,17 @@ impl Controller {
         {
             tracing::warn!("could not announce on mDNS: {e:#}");
         }
+        let responder = match Responder::start(
+            &self.identity.fingerprint().to_hex(),
+            &self.display_name,
+            port,
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!("not answering lookups on UDP {LOOKUP_PORT}: {e:#}");
+                None
+            }
+        };
         self.broadcast = Some(Broadcast {
             generation,
             port,
@@ -347,6 +394,7 @@ impl Controller {
             audio_note,
             server,
             viewers_task,
+            responder,
         });
         Ok(port)
     }
@@ -358,6 +406,7 @@ impl Controller {
         if let Some(d) = &mut self.discovery {
             d.withdraw();
         }
+        drop(b.responder);
         // Joins the encoder threads, which also releases their handles on the server.
         drop(b.encoder);
         drop(b.audio);
