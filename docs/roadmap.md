@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Peeroxide stands after **0.6.1 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.6.2 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
@@ -34,8 +34,8 @@ Fix these first; most are small.
 These pass automated tests, but nobody has clicked through them yet:
 - Clicking a contact under **Saved** to reconnect.
 - Switching broadcasters by clicking in the list.
-- Renaming yourself with ✏ and restarting.
-- The 🗑 (forget contact) icon rendering correctly.
+- Renaming yourself with Edit and restarting.
+- The station window (0.6.2), by hand: the themes and the settings window (port field, mini player reset), the picker on Windows 10 (each still may flash a yellow capture border), and on macOS and Wayland (the portal source gets no still). Checked so far: broadcasting and watching with sound between two PCs, and screenshots of every view on one PC.
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
@@ -72,7 +72,7 @@ Goal: a solid Windows build that is pleasant to watch, and that keeps itself up 
 - **Fullscreen viewer · built.** F11, a double-click on the video or the Fullscreen button toggle it, and Esc leaves. A bar with the name, mute, volume and exit appears when the mouse moves and hides with the cursor. It ends by itself when the stream does (FR-18, UC-10).
 - **Zoom**: fit to window (current behaviour), 100% (pixel-exact, scrollable), and fill.
 - **Pop-out window**: watch the stream in its own window while the controls stay in the main one. The mini player covers the minimized case; this would be a normal, decorated window next to a visible main one.
-- **Toggle the stats overlay**, off by default for normal users.
+- **Toggle the stats overlay**, off by default for normal users · built in 0.6.2 (Settings → Show debug figures).
 - Show the broadcaster's name and ID on the video while watching.
 
 ## 0.6 — H.265, muting apps and the mini player · released
@@ -83,9 +83,11 @@ Goal: a sharper stream for less, sound without the echo of a voice call, and a s
 
 **0.6.1** adds the first Linux package (`linux-x64`, built in a Debian container, glibc 2.35+), signed, and turns on the self-update for it. Nothing changes on Windows. Linux still counts as untested (see 0.8): so far it has only been started on Arch (Hyprland, Wayland).
 
-- **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves.md).
-- **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change.265.
-- **Mini player (FR-21, UC-11) · built.** Like Discord's picture-in-picture: minimizing Peeroxide while watching (or "🗗 Mini player") keeps the stream in a small window on top of the others. It can be dragged and resized, reopens where it was left, and has mute, back to Peeroxide and stop watching. A deferred egui viewport, pre-created hidden and revealed from `App::logic`, because eframe runs no ui pass for a minimized window.265 and muting apps.
+**0.6.2** (Windows only; Linux stays on 0.6.1 until its next package) redesigns the main window, contributed in #15: the name row and a settings gear open the left column and the video takes the full height; **Start broadcasting** opens a picker with a still of each source; six themes with a dark and a light side; the debug figures hidden unless turned on. No protocol change: it works with 0.6.0 and 0.6.1.
+
+- **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves.
+- **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change.
+- **Mini player (FR-21, UC-11) · built.** Like Discord's picture-in-picture: minimizing Peeroxide while watching (or "🗗 Mini player") keeps the stream in a small window on top of the others. It can be dragged and resized, reopens where it was left, and has mute, back to Peeroxide and stop watching. A deferred egui viewport, pre-created hidden and revealed from `App::logic`, because eframe runs no ui pass for a minimized window.
 
 ## 0.7 — Privacy controls (AC-02)
 
