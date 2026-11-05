@@ -23,7 +23,7 @@ use crate::encoder::{EncoderEnd, PreviewFrame};
 use crate::fullscreen;
 use crate::mini_player::{self, Action};
 use crate::mute_apps;
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{Palette, Settings, ThemeChoice};
 use crate::theme::{self, Station};
 use crate::thumbs::Thumbnails;
 use crate::video::VideoView;
@@ -74,6 +74,10 @@ pub struct App {
     fullscreen_since: Option<Instant>,
     /// The source picker is open.
     picker: bool,
+    /// The settings window is open.
+    settings_open: bool,
+    /// The broadcast port as typed in the settings window.
+    port_input: String,
     thumbs: Thumbnails,
     /// Last copy of a frame this machine already captured, shown in the well while broadcasting.
     preview: Option<TextureHandle>,
@@ -135,6 +139,8 @@ impl App {
             fullscreen_exit: false,
             fullscreen_since: None,
             picker: false,
+            settings_open: false,
+            port_input: String::new(),
             thumbs,
             preview: None,
         };
@@ -167,22 +173,19 @@ impl App {
         self.update_note = Some(note);
     }
 
-    /// Laid out right to left, so the parts are added last to first.
     fn update_note_ui(&mut self, ui: &mut egui::Ui) {
         let Some(note) = &self.update_note else {
             return;
         };
-        let dismiss = ui.small_button("×").on_hover_text("Dismiss").clicked();
-        if let Some(link) = &note.link {
-            ui.hyperlink_to("Download", link);
-        }
         if note.warn {
             ui.colored_label(ui.visuals().warn_fg_color, &note.text);
         } else {
             ui.weak(&note.text);
         }
-        ui.separator();
-        if dismiss {
+        if let Some(link) = &note.link {
+            ui.hyperlink_to("Download", link);
+        }
+        if ui.small_button("×").on_hover_text("Dismiss").clicked() {
             self.update_note = None;
         }
     }
@@ -193,75 +196,72 @@ impl App {
         }
     }
 
+    /// The first row of the column: the name and ID, and the settings key at the right end.
     fn identity_ui(&mut self, ui: &mut egui::Ui) {
         let station = station_of(ui);
-        // A `horizontal` inside right_to_left runs right to left too, so the name and the update
-        // note add their parts last to first.
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let choice = self.settings.theme;
-            let hover = match choice {
-                ThemeChoice::System => "System. Follows Windows.",
-                ThemeChoice::Dark | ThemeChoice::Light => choice.label(),
-            };
-            if theme_button(ui, &station, choice)
-                .on_hover_text(hover)
-                .clicked()
-            {
-                self.settings.theme = choice.next();
-                self.save_settings();
-            }
-            if self.update_note.is_some() {
-                ui.horizontal(|ui| self.update_note_ui(ui));
-            }
-            self.nameplate(ui, &station);
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if gear_button(ui, &station)
+                    .on_hover_text("Settings")
+                    .clicked()
+                {
+                    self.open_settings();
+                }
+                // What the gear leaves, read left to right.
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    self.nameplate(ui, &station);
+                });
+            });
         });
+        if self.update_note.is_some() {
+            ui.horizontal_wrapped(|ui| self.update_note_ui(ui));
+        }
     }
 
-    /// Display name and short ID. Laid out right to left, so the parts are added last to first.
+    /// Display name and short ID. The ID steps aside while the name is edited.
     fn nameplate(&mut self, ui: &mut egui::Ui, station: &Station) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(self.ctrl.fingerprint().short()).color(station.muted))
-                .on_hover_text(
-                    "Your fingerprint. Viewers see it next to your name and can compare it \
-                     with you to rule out impersonation.",
-                );
-            if let Some(edit) = &mut self.name_edit {
-                let save = ui.button("Save").clicked();
-                let response = ui.add(
-                    egui::TextEdit::singleline(edit)
-                        .char_limit(MAX_NAME_CHARS)
-                        .desired_width(180.0),
-                );
-                response.request_focus();
-                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if save || enter {
-                    let name = edit.trim().to_string();
-                    if !name.is_empty() {
-                        self.ctrl.set_display_name(name.clone());
-                        self.settings.display_name = Some(name);
-                        self.save_settings();
-                    }
-                    self.name_edit = None;
-                } else if escape {
-                    self.name_edit = None;
+        if let Some(edit) = &mut self.name_edit {
+            let response = ui.add(
+                egui::TextEdit::singleline(edit)
+                    .char_limit(MAX_NAME_CHARS)
+                    .desired_width((ui.available_width() - 60.0).max(80.0)),
+            );
+            response.request_focus();
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if ui.button("Save").clicked() || enter {
+                let name = edit.trim().to_string();
+                if !name.is_empty() {
+                    self.ctrl.set_display_name(name.clone());
+                    self.settings.display_name = Some(name);
+                    self.save_settings();
                 }
-            } else {
-                let live = self.ctrl.broadcast.is_some();
-                let edit = ui
-                    .add_enabled(!live, egui::Button::new("Edit").small())
-                    .on_hover_text("Change the name others see")
-                    .on_disabled_hover_text("Stop broadcasting to change your name");
-                if edit.clicked() {
-                    self.name_edit = Some(self.ctrl.display_name().to_string());
-                }
-                ui.label(
-                    RichText::new(self.ctrl.display_name())
-                        .color(station.body)
-                        .strong(),
-                );
+                self.name_edit = None;
+            } else if escape {
+                self.name_edit = None;
             }
-        });
+            return;
+        }
+        let name = self.ctrl.display_name();
+        ui.label(
+            RichText::new(truncate(name, 18))
+                .color(station.body)
+                .strong(),
+        )
+        .on_hover_text(name);
+        let live = self.ctrl.broadcast.is_some();
+        let edit = ui
+            .add_enabled(!live, egui::Button::new("Edit").small())
+            .on_hover_text("Change the name others see")
+            .on_disabled_hover_text("Stop broadcasting to change your name");
+        if edit.clicked() {
+            self.name_edit = Some(self.ctrl.display_name().to_string());
+        }
+        ui.label(RichText::new(self.ctrl.fingerprint().short()).color(station.muted))
+            .on_hover_text(
+                "Your fingerprint. Viewers see it next to your name and can compare it \
+                 with you to rule out impersonation.",
+            );
     }
 
     fn refresh_sources(&mut self) {
@@ -421,6 +421,8 @@ impl App {
     }
 
     fn station_column(&mut self, ui: &mut egui::Ui) {
+        self.identity_ui(ui);
+        ui.add_space(14.0);
         let live = self.ctrl.broadcast.is_some();
         if live {
             self.live_signal(ui);
@@ -742,18 +744,23 @@ impl App {
             let mut forget = false;
             let mut open = false;
             ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.small_button("Forget").clicked() {
-                        forget = true;
-                    }
-                    let row = plate(ui, &station, &c.name, &short, PlateMark::Saved, selected)
-                        .on_hover_text(format!(
-                            "ID {short}\nLast watched {}\n{}",
-                            ago(now, c.last_seen),
-                            addrs.join("\n")
-                        ));
-                    open = row.clicked() && !selected;
-                });
+                // Room for Forget after the plate.
+                let room = (ui.available_width() - 64.0).max(0.0);
+                let row = ui
+                    .scope(|ui| {
+                        ui.set_max_width(room);
+                        plate(ui, &station, &c.name, &short, PlateMark::Saved, selected)
+                    })
+                    .inner
+                    .on_hover_text(format!(
+                        "ID {short}\nLast watched {}\n{}",
+                        ago(now, c.last_seen),
+                        addrs.join("\n")
+                    ));
+                open = row.clicked() && !selected;
+                if ui.small_button("Forget").clicked() {
+                    forget = true;
+                }
             });
             if forget {
                 removed = Some(c.fingerprint.clone());
@@ -1254,11 +1261,7 @@ impl App {
     fn source_modal(&mut self, ctx: &egui::Context) {
         // Apply stills that arrived before this paint, so the cards don't open empty.
         self.thumbs.poll();
-        let station = if ctx.global_style().visuals.dark_mode {
-            Station::dark()
-        } else {
-            Station::light()
-        };
+        let station = theme::station(ctx.global_style().visuals.dark_mode);
         let mut close = false;
         let mut refresh = false;
         let mut begin = false;
@@ -1360,6 +1363,194 @@ impl App {
         } else if refresh {
             self.refresh_sources();
             self.thumbs.ensure(&self.sources);
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.port_input = self
+            .settings
+            .broadcast_port
+            .map(|port| port.to_string())
+            .unwrap_or_default();
+        self.settings_open = true;
+    }
+
+    /// The theme, and what settings.toml holds that has no control elsewhere: the debug
+    /// figures, the broadcast port and where the mini player opens.
+    fn settings_modal(&mut self, ctx: &egui::Context) {
+        let station = theme::station(ctx.global_style().visuals.dark_mode);
+        let width = (ctx.content_rect().width() - 96.0).clamp(300.0, 528.0);
+        let mut close = false;
+        let response = egui::Modal::new(egui::Id::new("settings"))
+            .frame(
+                egui::Frame::NONE
+                    .fill(station.key)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(24)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(width);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Settings")
+                            .color(station.body)
+                            .font(FontId::new(22.0, theme::condensed())),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("×").size(22.0).color(station.muted),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+                section_label(ui, &station, "Theme");
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+                    for palette in Palette::ALL {
+                        self.palette_card(ui, &station, palette);
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Appearance");
+                ui.horizontal(|ui| {
+                    for choice in ThemeChoice::ALL {
+                        let selected = self.settings.theme == choice;
+                        let hover = match choice {
+                            ThemeChoice::System => "Follows Windows",
+                            ThemeChoice::Dark => "Always the dark side",
+                            ThemeChoice::Light => "Always the light side",
+                        };
+                        if station_button(ui, &station, choice.label(), selected, 30.0, 14.0)
+                            .on_hover_text(hover)
+                            .clicked()
+                            && !selected
+                        {
+                            self.settings.theme = choice;
+                            self.save_settings();
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Stream");
+                let mut show = self.settings.show_stats;
+                if ui
+                    .checkbox(
+                        &mut show,
+                        RichText::new("Show debug figures").color(station.body),
+                    )
+                    .on_hover_text(
+                        "Codec, frame rate, bitrate and timings over a watched stream and \
+                         under the live line",
+                    )
+                    .changed()
+                {
+                    self.settings.show_stats = show;
+                    self.save_settings();
+                }
+                ui.add_space(12.0);
+                section_label(ui, &station, "Network");
+                let live = self.ctrl.broadcast.is_some();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Broadcast port").color(station.body));
+                    let field = ui
+                        .add_enabled(
+                            !live,
+                            egui::TextEdit::singleline(&mut self.port_input)
+                                .desired_width(72.0)
+                                .hint_text("any"),
+                        )
+                        .on_hover_text(
+                            "Kept for every broadcast, so connect strings and saved contacts \
+                             stay valid. Empty picks a free port.",
+                        )
+                        .on_disabled_hover_text("Stop broadcasting to change the port");
+                    match parse_port(&self.port_input) {
+                        Some(port) if field.changed() => {
+                            self.settings.broadcast_port = port;
+                            self.save_settings();
+                        }
+                        Some(_) => {}
+                        None => {
+                            ui.colored_label(ui.visuals().warn_fg_color, "Use 1 to 65535");
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                section_label(ui, &station, "Mini player");
+                let placed = self.settings.mini_player.is_some();
+                if ui
+                    .add_enabled(placed, egui::Button::new("Open it in the corner again"))
+                    .on_hover_text("Forgets where it was left; it opens in the corner next time")
+                    .on_disabled_hover_text("It already opens in the corner")
+                    .clicked()
+                {
+                    self.settings.mini_player = None;
+                    self.save_settings();
+                }
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Saved in {}",
+                        self.dir.join("settings.toml").display()
+                    ))
+                    .color(station.muted)
+                    .size(12.0),
+                );
+            });
+        if close || response.should_close() {
+            self.settings_open = false;
+        }
+    }
+
+    /// A card painted in the palette's own colors, on the side in use now.
+    fn palette_card(&mut self, ui: &mut egui::Ui, station: &Station, palette: Palette) {
+        let own = Station::of(palette, station.dark);
+        let selected = self.settings.palette == palette;
+        let (rect, response) = ui.allocate_exact_size(vec2(160.0, 72.0), Sense::click());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 4.0, own.housing);
+        painter.text(
+            rect.left_top() + vec2(10.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            palette.label(),
+            FontId::proportional(14.0),
+            own.body,
+        );
+        painter.text(
+            rect.left_top() + vec2(10.0, 27.0),
+            egui::Align2::LEFT_TOP,
+            palette.sides(),
+            FontId::new(12.0, theme::condensed()),
+            own.muted,
+        );
+        // A nameplate with its lamp, and the strong key, as the column shows them.
+        let row = rect.bottom() - 15.0;
+        let plate =
+            Rect::from_min_size(egui::pos2(rect.left() + 10.0, row - 6.0), vec2(40.0, 12.0));
+        painter.rect_filled(plate, 2.0, own.paper);
+        painter.circle_filled(plate.left_center() + vec2(7.0, 0.0), 2.5, own.lamp);
+        let key = Rect::from_min_size(egui::pos2(plate.right() + 8.0, row - 6.0), vec2(40.0, 12.0));
+        painter.rect_filled(key, 2.0, own.strong_fill);
+        let stroke = if selected {
+            station.selected_stroke()
+        } else if response.hovered() {
+            Stroke::new(1.0, station.body)
+        } else {
+            Stroke::new(1.0, own.line)
+        };
+        painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+        if response.clicked() && !selected {
+            self.settings.palette = palette;
+            self.save_settings();
         }
     }
 
@@ -1491,7 +1682,7 @@ impl eframe::App for App {
             return;
         }
 
-        theme::apply(ui.ctx(), self.settings.theme);
+        theme::apply(ui.ctx(), self.settings.palette, self.settings.theme);
         let live = self.ctrl.broadcast.is_some();
         // Source and quality stay as they were when the line opened.
         if live && self.picker {
@@ -1501,10 +1692,6 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(Duration::from_millis(250));
         }
         let frame = housing_frame(ui);
-
-        egui::Panel::top("identity").frame(frame).show(ui, |ui| {
-            ui.horizontal(|ui| self.identity_ui(ui));
-        });
 
         if live {
             egui::Panel::bottom("live-bar")
@@ -1528,6 +1715,9 @@ impl eframe::App for App {
 
         if self.picker {
             self.source_modal(ui.ctx());
+        }
+        if self.settings_open {
+            self.settings_modal(ui.ctx());
         }
         self.update_fullscreen(&ctx, fullscreen);
     }
@@ -1581,11 +1771,26 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn station_of(ui: &egui::Ui) -> Station {
-    if ui.visuals().dark_mode {
-        Station::dark()
-    } else {
-        Station::light()
+    theme::station(ui.visuals().dark_mode)
+}
+
+fn section_label(ui: &mut egui::Ui, station: &Station, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .color(station.muted)
+            .font(FontId::new(13.0, theme::condensed())),
+    );
+    ui.add_space(4.0);
+}
+
+/// The settings window's port field: empty picks a free port, otherwise 1 to 65535.
+/// `None` when the text is not a port.
+fn parse_port(text: &str) -> Option<Option<u16>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(None);
     }
+    text.parse::<u16>().ok().filter(|port| *port != 0).map(Some)
 }
 
 fn housing_frame(ui: &egui::Ui) -> egui::Frame {
@@ -1637,41 +1842,30 @@ fn station_button(
     ui.add(station_key(station, text, strong, min_height, font_size))
 }
 
-/// Moon, sun, or a computer, for the theme currently in use.
-fn theme_button(ui: &mut egui::Ui, station: &Station, choice: ThemeChoice) -> egui::Response {
+/// The settings key: a gear.
+fn gear_button(ui: &mut egui::Ui, station: &Station) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-    if response.hovered() {
-        ui.painter()
-            .circle_filled(rect.center(), 12.0, station.key_hover);
-    }
-    let color = station.body;
     let behind = if response.hovered() {
         station.key_hover
     } else {
         station.housing
     };
-    match choice {
-        ThemeChoice::Dark => paint_moon(ui.painter(), rect.center(), color, behind),
-        ThemeChoice::Light => paint_sun(ui.painter(), rect.center(), color),
-        ThemeChoice::System => paint_computer(ui.painter(), rect.center(), color),
+    if response.hovered() {
+        ui.painter().circle_filled(rect.center(), 12.0, behind);
     }
+    paint_gear(ui.painter(), rect.center(), station.body, behind);
     response
 }
 
-fn paint_sun(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
-    painter.circle_filled(center, 3.4, color);
-    let stroke = Stroke::new(1.6, color);
+fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32, behind: Color32) {
+    let tooth = Stroke::new(3.0, color);
     for i in 0..8 {
         let angle = i as f32 * std::f32::consts::TAU / 8.0;
         let dir = vec2(angle.cos(), angle.sin());
-        painter.line_segment([center + dir * 5.4, center + dir * 8.2], stroke);
+        painter.line_segment([center + dir * 5.0, center + dir * 8.5], tooth);
     }
-}
-
-fn paint_moon(painter: &egui::Painter, center: egui::Pos2, color: Color32, behind: Color32) {
-    let body = center + vec2(-1.4, 0.6);
-    painter.circle_filled(body, 6.4, color);
-    painter.circle_filled(body + vec2(3.5, -2.1), 5.5, behind);
+    painter.circle_filled(center, 6.0, color);
+    painter.circle_filled(center, 2.5, behind);
 }
 
 fn icon_key(
@@ -1692,20 +1886,6 @@ fn icon_key(
         .tint(station.body)
         .paint_at(ui, icon);
     response.on_hover_text(hover)
-}
-
-fn paint_computer(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
-    let screen = Rect::from_center_size(center + vec2(0.0, -2.0), vec2(14.0, 9.0));
-    painter.rect_stroke(
-        screen,
-        1.5,
-        Stroke::new(1.5, color),
-        egui::StrokeKind::Inside,
-    );
-    let neck = screen.center_bottom();
-    let stroke = Stroke::new(1.5, color);
-    painter.line_segment([neck, neck + vec2(0.0, 3.2)], stroke);
-    painter.line_segment([neck + vec2(-4.2, 3.2), neck + vec2(4.2, 3.2)], stroke);
 }
 
 /// A circular arrow, same weight as the close mark beside it.
@@ -1934,6 +2114,15 @@ mod tests {
     fn truncates_on_char_boundaries() {
         assert_eq!(truncate("héllo wörld", 5), "héll…");
         assert_eq!(truncate("short", 10), "short");
+    }
+
+    #[test]
+    fn port_field_takes_empty_or_a_real_port() {
+        assert_eq!(parse_port(""), Some(None));
+        assert_eq!(parse_port(" 50123 "), Some(Some(50123)));
+        assert_eq!(parse_port("0"), None);
+        assert_eq!(parse_port("70000"), None);
+        assert_eq!(parse_port("port"), None);
     }
 
     #[test]

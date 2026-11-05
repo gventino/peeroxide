@@ -281,7 +281,7 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 In the platform's application-data directory; on Windows, `%APPDATA%\Peeroxide\data`. `--profile x` uses `profiles\x` inside it. The path is printed on startup (`starting … dir=…`). Data from versions up to 0.2, when the app was called "P2P Screen Share", is moved there on first run.
 
 - `identity.cert.der`, `identity.key.der`: this peer's identity. Deleting them creates a new ID.
-- `settings.toml`: display name, quality preset, broadcast port, whether to share audio, which apps are muted in a shared monitor's sound, volume/mute, where the mini player was left, and the theme. `show_stats = true` shows the debug figures (codec, fps, bitrate, decode and encode times, audio buffer) over a watched stream and under the live line; they are hidden by default.
+- `settings.toml`: display name, quality preset, broadcast port, whether to share audio, which apps are muted in a shared monitor's sound, volume/mute, where the mini player was left, the theme (`palette`: station, gruvbox, kanagawa, dracula, catppuccin or discord; `theme`: system, dark or light), and `show_stats`, the debug figures (codec, fps, bitrate, decode and encode times, audio buffer) over a watched stream and under the live line, off by default. The gear next to your name opens Settings, which changes the theme, the debug figures, the broadcast port and the mini player's place without editing the file.
 - `contacts.toml`: saved broadcasters (ID, name, last working addresses).
 - `logs/session.log.YYYY-MM-DD`: session log, including update checks and installs.
 
