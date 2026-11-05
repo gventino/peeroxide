@@ -58,7 +58,11 @@ WATCHING
 
 IF SOMEONE NEVER SHOWS UP
 -------------------------
-Connect manually once; they are saved from then on.
+On Tailscale (or Headscale), people broadcasting on your tailnet show up by
+themselves, as long as Tailscale runs on both PCs. Saved people show up
+too while they broadcast.
+
+Otherwise, connect manually once; they are saved from then on.
 1. The broadcaster clicks "Copy connect string" and picks the entry for the
    network you share.
 2. They send you that text; you open "Connect manually", paste it, and
