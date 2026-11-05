@@ -3580,6 +3580,8 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "mdns-sd",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
