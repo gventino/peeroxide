@@ -37,7 +37,7 @@ Each broadcaster streams independently to whichever viewers are currently connec
 
 | ID | Requirement | Description | Priority |
 |----|-------------|-------------|----------|
-| FR-01 | Peer Discovery | The application shall automatically discover other instances of the application running on the same LAN segment, without requiring the user to manually enter an IP address. | High |
+| FR-01 | Peer Discovery | The application shall automatically discover other instances of the application running on the same LAN segment, and on networks that don't carry multicast where it knows where to ask (saved contacts, the devices of a Tailscale or Headscale tailnet), without requiring the user to manually enter an IP address. | High |
 | FR-02 | Start Broadcast | A user shall be able to start broadcasting their screen to the network. | High |
 | FR-03 | Capture Source Selection | A broadcaster shall be able to choose whether to share the full desktop or a single application window as the video source. | Medium |
 | FR-04 | Stop Broadcast | A broadcaster shall be able to stop broadcasting at any time, immediately terminating all active viewer sessions for that stream. | High |

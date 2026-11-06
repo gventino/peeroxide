@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Peeroxide stands after **0.6.2 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
+Where Peeroxide stands after **0.6.3 (pre-alpha)**, and what comes next. The numbers moved twice: audio, first planned as 0.6, shipped in 0.4.0; then H.265, muting apps and the mini player shipped as 0.6.0, so privacy controls moved to 0.7, macOS and Linux to 0.8, and distribution to 0.9. Requirement IDs (FR-, NFR-, AC-) refer to [functional-requirements.md](functional-requirements.md), [non-functional-requirements.md](non-functional-requirements.md) and [abuse-cases.md](abuse-cases.md).
 
 ```mermaid
 flowchart LR
@@ -36,6 +36,7 @@ These pass automated tests, but nobody has clicked through them yet:
 - Switching broadcasters by clicking in the list.
 - Renaming yourself with Edit and restarting.
 - The station window (0.6.2), by hand: the themes and the settings window (port field, mini player reset), the picker on Windows 10 (each still may flash a yellow capture border), and on macOS and Wayland (the portal source gets no still). Checked so far: broadcasting and watching with sound between two PCs, and screenshots of every view on one PC.
+- Lookups (0.6.3): two PCs on a Tailscale or Headscale tailnet finding each other with no connect string, and leaving the list within about 10 s of stopping; a release build asking Tailscale without flashing a console; the Settings toggle. Checked so far: two instances on one PC (found by lookup at the saved Tailscale address, and the tailnet read from Tailscale 1.104 with a Headscale server).
 - The 0.2 → 0.3 data-folder migration on a real installation.
 - A long session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.
 - Self-update (built for 0.5): Skip; a read-only folder showing the download link; two profiles starting at once; and a real update through GitHub, which needs a release after the first one that contains the updater. Checked on one PC with a throwaway key and a local server: installing, restarting with "Updated to …", no update loop, a tampered package rejected, and opening quickly with no server.
@@ -84,6 +85,8 @@ Goal: a sharper stream for less, sound without the echo of a voice call, and a s
 **0.6.1** adds the first Linux package (`linux-x64`, built in a Debian container, glibc 2.35+), signed, and turns on the self-update for it. Nothing changes on Windows. Linux still counts as untested (see 0.8): so far it has only been started on Arch (Hyprland, Wayland).
 
 **0.6.2** (Windows only; Linux stays on 0.6.1 until its next package) redesigns the main window, contributed in #15: the name row and a settings gear open the left column and the video takes the full height; **Start broadcasting** opens a picker with a still of each source; six themes with a dark and a light side; the debug figures hidden unless turned on. No protocol change: it works with 0.6.0 and 0.6.1.
+
+**0.6.3** (Windows only; Linux stays on 0.6.1) finds broadcasters where multicast doesn't reach, in #16: while broadcasting, a peer answers lookups on UDP 47123, and viewers ask their saved contacts and the online devices of their Tailscale tailnet (also with Headscale). No protocol change: it works with 0.6.0 to 0.6.2, which don't answer lookups but still show up through mDNS or under Saved.
 
 - **H.265 on the GPU, and 60 fps · built.** Broadcasts are encoded in H.265 by the graphics card (Media Foundation: the NVIDIA, AMD and Intel encoders), with H.264 on the CPU as the automatic fallback, including mid-broadcast. Viewers decode H.265 with libde265, compiled into the exe on every platform. New presets 720p60 and 1080p60; Internet / VPN goes from 20 to 24 fps. Presets are saved by id, so renaming one keeps the user's choice. Protocol version 3 (a codec byte in every video frame): 0.5 and 0.4 peers get "incompatible version" and update themselves.
 - **Mute apps in a monitor's shared sound (FR-20) · built.** A checklist of the apps playing sound; ticked ones are left out of what viewers hear, so friends in a Discord or TeamSpeak call don't hear themselves. Voice chat apps start ticked; it works live and is remembered per app. Windows allows one excluded process tree per capture, so muting switches to one capture per other app, mixed. No protocol change.
@@ -154,4 +157,4 @@ Not scheduled; to be picked up when they become important.
 - 1440p presets (realistic now that H.265 is encoded on the GPU; decoding on the viewer's CPU is the limit).
 - Viewer-side recording of a stream.
 - Pointer highlighting or drawing on the shared screen.
-- Discovery across subnets and VPNs that block multicast, e.g. by sharing saved contacts.
+- Discovery on other networks that block multicast (e.g. ZeroTier without multicast, plain WireGuard) for people never connected to before. Since 0.6.3, saved contacts and Tailscale tailnets are found by lookups.

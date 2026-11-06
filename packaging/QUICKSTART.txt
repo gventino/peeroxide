@@ -9,6 +9,18 @@ Requirements: Windows 10 version 2004 or newer, or Windows 11. No installation.
 Build: {commit}
 
 
+NEW IN 0.6.3
+------------
+- Tailscale and Headscale: people broadcasting on your tailnet show up in
+  the list by themselves, with no connect string, as long as Tailscale
+  runs on both PCs. Settings -> "Find broadcasters on Tailscale" turns it
+  off.
+- Saved people who are broadcasting show up in the list too, also over a
+  VPN that hides them from the network list.
+- Both sides need 0.6.3 for this. Works with 0.6.0 to 0.6.2 as before,
+  which update themselves when you open them.
+
+
 NEW IN 0.6.2
 ------------
 - A new look: your name and ID sit at the top left, and the picture uses
