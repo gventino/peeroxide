@@ -105,7 +105,6 @@ impl App {
         dir: PathBuf,
         ctx: egui::Context,
     ) -> anyhow::Result<Self> {
-        theme::install_fonts(&ctx);
         egui_extras::install_image_loaders(&ctx);
         let thumbs = Thumbnails::new(ctx.clone());
         let ctrl = Controller::new(identity, display_name, !settings.skip_tailscale, ctx)?;

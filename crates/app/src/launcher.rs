@@ -58,6 +58,7 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new(start: Start, ctx: egui::Context) -> anyhow::Result<Self> {
+        crate::theme::install_fonts(&ctx);
         let Some(cfg) = update_config(&start.args) else {
             let note = start.args.just_updated.as_ref().map(|v| UpdateNote {
                 text: format!("Updated to {v}"),

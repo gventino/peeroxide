@@ -412,6 +412,9 @@ fn style(station: Station) -> egui::Style {
 
 /// Uses Franklin Gothic Book for body text, and Medium Condensed for the small labels, when
 /// those faces are installed. Otherwise egui's own font stays.
+///
+/// Takes effect at the start of the next pass. [`condensed`] is already true once the face
+/// is found, so the caller has to install before the pass that draws with it.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let dir = Path::new(r"C:\Windows\Fonts");
