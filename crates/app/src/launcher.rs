@@ -58,11 +58,6 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new(start: Start, ctx: egui::Context) -> anyhow::Result<Self> {
-        // egui applies `set_fonts` on the next pass, while `condensed()` is true immediately.
-        // The update check creates the main UI in the middle of a pass, so the fonts have to
-        // be installed here, before the first pass. Installing only inside `App::new` panics
-        // on that pass ("FontFamily::Name(\"Condensed\") is not bound to any fonts") and the
-        // window closes.
         crate::theme::install_fonts(&ctx);
         let Some(cfg) = update_config(&start.args) else {
             let note = start.args.just_updated.as_ref().map(|v| UpdateNote {

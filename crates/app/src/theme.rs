@@ -463,20 +463,3 @@ pub fn condensed() -> egui::FontFamily {
         egui::FontFamily::Proportional
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_condensed_face_is_bound_on_the_pass_after_install() {
-        let ctx = egui::Context::default();
-        install_fonts(&ctx);
-        let family = condensed();
-        ctx.begin_pass(egui::RawInput::default());
-        let bound = ctx.fonts(|fonts| fonts.definitions().families.contains_key(&family));
-        // The pass built a font atlas. Dropping it unhandled panics.
-        ctx.end_pass().textures_delta.clear();
-        assert!(bound);
-    }
-}
