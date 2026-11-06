@@ -3497,7 +3497,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3527,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-audio"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-capture"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -3553,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-codec"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -3569,14 +3569,14 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-de265-sys"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "peeroxide-discovery"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "mdns-sd",
@@ -3587,7 +3587,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-net"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3606,7 +3606,7 @@ dependencies = [
 
 [[package]]
 name = "peeroxide-update"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "clap",
