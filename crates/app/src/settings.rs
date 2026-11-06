@@ -101,6 +101,9 @@ pub struct Settings {
     /// Debug figures: codec, frame rate, bitrate and timings over a watched stream and under
     /// the live line. Off unless turned on in Settings or in this file.
     pub show_stats: bool,
+    /// Don't ask the devices of this computer's tailnet whether they broadcast. False (they are
+    /// asked) unless turned off in Settings or in this file.
+    pub skip_tailscale: bool,
 }
 
 impl Settings {
@@ -153,6 +156,7 @@ mod tests {
             theme: ThemeChoice::Dark,
             palette: Palette::Kanagawa,
             show_stats: true,
+            skip_tailscale: true,
         };
         s.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
@@ -184,6 +188,7 @@ mod tests {
         assert_eq!(s.theme, ThemeChoice::System);
         assert_eq!(s.palette, Palette::Station);
         assert!(!s.show_stats, "the debug figures stay hidden");
+        assert!(!s.skip_tailscale, "the tailnet is asked");
         assert_eq!(s.volume(), 1.0);
         let loud = Settings {
             volume: Some(250),

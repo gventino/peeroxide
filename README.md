@@ -28,7 +28,7 @@ Design documents: [functional requirements](docs/functional-requirements.md) · 
    - If the broadcaster shares audio, a mute button and a volume slider appear in the left column. They only affect what you hear, and are remembered. Audio plays in sync with the video.
    - **Fullscreen:** press F11, double-click the video, or click the fullscreen button under the video. Only the stream is shown. Move the mouse for a bar with the name, mute, volume and an exit button; it hides again, with the cursor, after 2 seconds. Esc, F11 or a double-click go back, and fullscreen ends by itself when the stream ends.
    - **Mini player:** minimize Peeroxide while watching (or click the mini player button under the video, or in the fullscreen bar), and the stream keeps playing in a small window that stays on top of the others, like Discord's picture-in-picture. It opens in the bottom-right corner; drag it anywhere and resize it from its top-left grip, and it reopens where you left it. Moving the mouse over it shows the broadcaster's name, mute, **🗖** to go back to Peeroxide (or double-click the video) and **🗙** to stop watching. It closes by itself when the stream ends, and Peeroxide flashes in the taskbar.
-3. **Saved:** everyone you have watched is remembered. When they aren't showing up in the list, e.g. discovery doesn't reach them, they appear under **Saved**. Click to connect at their last address, or **Forget** them.
+3. **Saved:** everyone you have watched is remembered. While they broadcast, they show up in the list even where discovery doesn't reach them: Peeroxide asks their saved address every few seconds (see [Network requirements](#network-requirements)). Otherwise they appear under **Saved**. Click to connect at their last address, or **Forget** them.
 4. **Check who you are watching:** every peer has an ID such as `7268-E22A`, shown next to its name. It is derived from that peer's certificate, and the connection is refused if the broadcaster can't prove it owns that ID.
    - If two broadcasters share a name, an orange **⚠ Check ID** appears; ask the person you expect for their ID (shown next to their name, at the top left of their app).
    - A red **⚠ Check ID** means someone is using the name of a saved contact with a *different* ID: a reinstall, or an impersonation attempt.
@@ -108,8 +108,10 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 
 ### Network requirements
 
-- Peers must be on the same subnet (mDNS does not cross routers). Discovery uses UDP port 5353 (multicast); video uses one random UDP port per broadcaster.
-- Virtual LANs such as Hamachi or Radmin VPN work like a LAN: the broadcaster is reachable on the adapter's address (25.x / 26.x). Whether discovery works depends on the VPN forwarding multicast. When it doesn't, use the connect string once; the broadcaster is saved from then on. Over the internet, use the **Internet / VPN** preset.
+- Peers must be on the same subnet (mDNS does not cross routers). Discovery uses UDP port 5353 (multicast); video uses one random UDP port per broadcaster, kept for every broadcast.
+- Where multicast doesn't reach, broadcasters are found by **lookups**: while broadcasting, Peeroxide answers on UDP port **47123** with what its mDNS announcement says (name, ID and video port). Every few seconds, a viewer asks the addresses of its saved contacts and, with Tailscale, the devices of its tailnet. An answer is never larger than the question, and it is checked like an announcement: watching still verifies the ID.
+- **Tailscale and Headscale:** a tailnet carries no multicast, so mDNS never sees anyone there. Peeroxide asks the Tailscale app on the computer for the tailnet's online devices (`tailscale status --json`, which works the same with a Headscale server) and asks each one on UDP 47123, so broadcasters on the tailnet appear in the list. With ACLs, allow UDP 47123 and the broadcaster's video port between the devices. Settings → **Find broadcasters on Tailscale** turns this off.
+- Virtual LANs such as Hamachi or Radmin VPN work like a LAN: the broadcaster is reachable on the adapter's address (25.x / 26.x). Whether discovery works depends on the VPN forwarding multicast. When it doesn't, use the connect string once; the broadcaster is saved from then on, and found by lookups at that address. Over the internet, use the **Internet / VPN** preset.
 - **Windows firewall:** the first run triggers a Windows Defender Firewall prompt. Allow the app on every network type you will use. Virtual LAN adapters (and many home networks) are classified *Public*, so tick **Public** too; otherwise discovery and incoming connections are blocked.
 - If discovery is blocked (e.g. guest Wi-Fi with client isolation, some VPNs), the broadcaster uses **Copy connect string**, picks the network adapter the viewer shares with them, and the viewer pastes the string into **Connect manually**.
 
@@ -128,7 +130,7 @@ Bob sees the test pattern and hears a beep every second while its top-right squa
 | `crates/de265-sys` | libde265 1.1.3 (LGPL-3.0), vendored and compiled with the `cc` crate (no CMake, no bindgen), and bindings to the part of its C API the codec uses. |
 | `crates/audio` | Audio capture: Windows process loopback via `wasapi` (one app's process tree, or everything except Peeroxide), plus a test tone. For a monitor with muted apps: the list of apps playing sound, and one capture per other app, mixed on a timeline by capture time. Playback via `cpal` with a lock-free ring buffer and volume/mute. The playout scheduler that keeps audio in sync with video. |
 | `crates/net` | Peer identity, fingerprint-pinned TLS 1.3 over QUIC (`quinn`), wire protocol, `BroadcastServer`, `ViewerClient`. |
-| `crates/discovery` | mDNS announce/browse (`mdns-sd`) with validation of untrusted announcements. |
+| `crates/discovery` | mDNS announce/browse (`mdns-sd`) with validation of untrusted announcements. Unicast lookups on UDP 47123 for networks without multicast: a responder while broadcasting, and a viewer side that asks saved contacts and the Tailscale tailnet (`tailscale status --json`). |
 | `crates/update` | Self-update: GitHub release lookup (`ureq`, rustls + the OS certificate store), download with size caps, minisign signature check, and replacing the running exe (`self-replace`). Also the `release-sign` and `serve-release` tools. |
 | `crates/app` | `peeroxide` binary: egui UI, controller, capture→encode and decode→display pipelines (video and audio), viewer state machine, settings, logging. |
 
@@ -238,6 +240,9 @@ Developer tools: `cargo run --release -p peeroxide-capture --example probe` (lis
 - [x] A is killed → B returns to the list (~6 s); A closed normally → B is told immediately and A disappears from the list.
 - [x] Two different machines over Radmin VPN, with discovery and pasted connect strings.
 - [x] Connecting once by connect string saves the broadcaster; they keep the same port after a restart; a different identity using their name is flagged.
+- [x] Lookups with two instances on one PC: the broadcaster answers on UDP 47123, the viewer finds it at its saved Tailscale address (100.64.x) and reads the tailnet's devices from Tailscale 1.104 with a Headscale server.
+- [ ] Two PCs on a Headscale tailnet: the broadcaster appears in the list with no connect string, and leaves it within about 10 s of stopping.
+- [ ] Release build (no console): asking Tailscale flashes no window; turning **Find broadcasters on Tailscale** off and on.
 - [ ] Reconnecting from **Saved** by clicking, and switching broadcasters by clicking (both covered by automated tests; click once by hand).
 - [ ] Renaming yourself with Edit persists across restarts.
 - [ ] A session over Radmin VPN with the **Internet / VPN** preset while scrolling or playing video.

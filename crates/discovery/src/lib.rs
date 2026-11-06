@@ -1,7 +1,14 @@
-//! LAN peer discovery over mDNS/DNS-SD.
+//! Peer discovery: mDNS/DNS-SD on the LAN, and unicast lookups where multicast doesn't reach
+//! (a Tailscale or Headscale tailnet, saved contacts on other networks).
 //!
-//! A peer announces itself only while broadcasting. Announcements are untrusted input: they are
-//! validated, capped in number, and only point at a fingerprint that the transport later verifies.
+//! A peer announces itself, and answers lookups, only while broadcasting. Announcements and
+//! answers are untrusted input: they are validated, capped in number, and only point at a
+//! fingerprint that the transport later verifies.
+
+mod lookup;
+mod tailscale;
+
+pub use lookup::{LOOKUP_PORT, Lookup, Responder};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -157,14 +164,41 @@ impl PeerTable {
 
     fn snapshot(&self) -> Vec<Peer> {
         let mut peers: Vec<Peer> = self.peers.values().cloned().collect();
-        peers.sort_by(|a, b| {
-            a.name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-        });
+        sort_peers(&mut peers);
         peers
     }
+}
+
+/// By name, then fingerprint, so the list doesn't reorder between updates.
+fn sort_peers(peers: &mut [Peer]) {
+    peers.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
+    });
+}
+
+/// One entry per broadcaster seen by either source (e.g. mDNS and lookups). A broadcaster in
+/// both keeps the first one's name and addresses, followed by the second one's other addresses.
+pub fn merge(first: &[Peer], second: &[Peer]) -> Vec<Peer> {
+    let mut merged: Vec<Peer> = Vec::new();
+    for peer in first.iter().chain(second) {
+        if let Some(known) = merged
+            .iter_mut()
+            .find(|p| p.fingerprint == peer.fingerprint)
+        {
+            for addr in &peer.addrs {
+                if !known.addrs.contains(addr) {
+                    known.addrs.push(*addr);
+                }
+            }
+        } else if merged.len() < MAX_PEERS {
+            merged.push(peer.clone());
+        }
+    }
+    sort_peers(&mut merged);
+    merged
 }
 
 fn validate(
@@ -175,6 +209,16 @@ fn validate(
     port: u16,
 ) -> anyhow::Result<Peer> {
     ensure!(version == Some(TXT_VERSION), "unsupported version");
+    peer_from(name, fingerprint, ips, port)
+}
+
+/// A peer from what it says about itself (an mDNS announcement or a lookup answer).
+fn peer_from(
+    name: Option<&str>,
+    fingerprint: Option<&str>,
+    ips: impl IntoIterator<Item = IpAddr>,
+    port: u16,
+) -> anyhow::Result<Peer> {
     let fingerprint = fingerprint
         .and_then(normalize_fingerprint)
         .context("invalid fingerprint")?;
@@ -330,6 +374,33 @@ mod tests {
         t.upsert("a", peer(&format!("{:064x}", 1), "Alice"));
         let names: Vec<String> = t.snapshot().into_iter().map(|p| p.name).collect();
         assert_eq!(names, ["Alice", "bob"]);
+    }
+
+    #[test]
+    fn merge_joins_sources_by_fingerprint() {
+        let fp = |i: u8| format!("{i:064x}");
+        let at = |fp: &str, name: &str, ip: &str| {
+            validate(Some("1"), Some(name), Some(fp), [ip.parse().unwrap()], 5000).unwrap()
+        };
+        let mdns = [
+            at(&fp(1), "Bob", "192.168.0.2"),
+            at(&fp(2), "alice", "192.168.0.3"),
+        ];
+        let found = [
+            at(&fp(1), "Bob (lookup)", "100.64.0.2"),
+            at(&fp(3), "Carol", "100.64.0.3"),
+        ];
+        let merged = merge(&mdns, &found);
+        let names: Vec<&str> = merged.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["alice", "Bob", "Carol"]);
+        let addrs: Vec<String> = merged[1].addrs.iter().map(ToString::to_string).collect();
+        assert_eq!(addrs, ["192.168.0.2:5000", "100.64.0.2:5000"]);
+        assert_eq!(merge(&mdns, &[]), merge(&[], &mdns), "both sorted");
+
+        let many: Vec<Peer> = (0..=MAX_PEERS as u8)
+            .map(|i| at(&fp(i), "x", "10.0.0.1"))
+            .collect();
+        assert_eq!(merge(&many, &found).len(), MAX_PEERS);
     }
 
     /// Real mDNS on this machine: one daemon announces, another discovers, then the goodbye.

@@ -125,8 +125,10 @@ WATCHING
 SAVED
 -----
 - Everyone you watch is saved automatically.
-- If a saved person is broadcasting but doesn't show up in the list, look
-  under "Saved" and click their name to connect. "Forget" removes them.
+- A saved person who broadcasts shows up in the list by themselves, also
+  over Tailscale or a VPN: Peeroxide asks their saved address.
+- If they still don't show up, look under "Saved" and click their name to
+  connect. "Forget" removes them.
 - A red "Check ID" next to a name means someone is using the name of a
   person you saved, but with a different ID. That happens after a
   reinstall, but it could also be an impersonation: confirm the ID with them.
@@ -134,7 +136,11 @@ SAVED
 
 IF SOMEONE NEVER SHOWS UP
 -------------------------
-Connect manually once; they are saved from then on.
+On Tailscale (or Headscale), people broadcasting on your tailnet show up by
+themselves, as long as Tailscale runs on both PCs. Settings -> "Find
+broadcasters on Tailscale" turns that off.
+
+Otherwise, connect manually once; they are saved from then on.
 1. The broadcaster clicks "Copy connect string" and picks the entry for the
    network you share - for Radmin, the one named "Radmin VPN" (26.x.x.x).
 2. They send you that text (chat, Discord, ...).
@@ -146,6 +152,7 @@ GOOD TO KNOW
 - Anyone who can reach you on the network can watch, and hear, while you
   broadcast. Stop broadcasting when you're done.
 - The gear next to your name opens Settings: the theme, the numbers over
-  the video, and the network port your broadcasts use.
+  the video, the network port your broadcasts use, and looking for people
+  on Tailscale.
 - Settings, your ID, saved people and logs are stored in:
   %APPDATA%\Peeroxide\data

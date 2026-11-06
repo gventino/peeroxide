@@ -12,7 +12,7 @@ use eframe::egui::{
 use peeroxide_audio::{AudioSource, MutedApps};
 use peeroxide_capture::{Source, SourceKind, list_sources};
 use peeroxide_codec::{Codec, Preset, hardware_h265_encoder};
-use peeroxide_discovery::Peer;
+use peeroxide_discovery::{LOOKUP_PORT, Peer, merge};
 use peeroxide_net::{Fingerprint, Identity, SessionEvent, SessionId, StopReason};
 
 use crate::Args;
@@ -51,7 +51,11 @@ pub struct App {
     broadcast_note: Option<String>,
     viewer: ViewerState,
     session: Option<SessionId>,
+    /// Everyone broadcasting that we know of: `mdns_peers` and `found_peers` merged.
     peers: Vec<Peer>,
+    mdns_peers: Vec<Peer>,
+    /// Answering lookups: saved contacts and the tailnet's devices.
+    found_peers: Vec<Peer>,
     contacts: Contacts,
     watch_target: Option<PeerTarget>,
     connect_input: String,
@@ -104,7 +108,7 @@ impl App {
         theme::install_fonts(&ctx);
         egui_extras::install_image_loaders(&ctx);
         let thumbs = Thumbnails::new(ctx.clone());
-        let ctrl = Controller::new(identity, display_name, ctx)?;
+        let ctrl = Controller::new(identity, display_name, !settings.skip_tailscale, ctx)?;
         let video = Arc::new(Mutex::new(VideoView::default()));
         let mini = mini_player::Shared::new(video.clone(), ctrl.video.clone(), ctrl.output.clone());
         let mut app = Self {
@@ -125,6 +129,8 @@ impl App {
             viewer: ViewerState::Idle,
             session: None,
             peers: Vec::new(),
+            mdns_peers: Vec::new(),
+            found_peers: Vec::new(),
             connect_input: String::new(),
             watch_note: None,
             stream_audio: false,
@@ -146,6 +152,7 @@ impl App {
         };
         app.ctrl.output.set_volume(app.settings.volume());
         app.ctrl.output.set_muted(app.settings.muted);
+        app.sync_lookup_contacts();
         app.refresh_sources();
         if args.share_audio {
             app.settings.share_audio = true;
@@ -337,6 +344,33 @@ impl App {
         if let Err(e) = self.contacts.save(&self.dir) {
             tracing::warn!("could not save contacts: {e:#}");
         }
+        self.sync_lookup_contacts();
+    }
+
+    /// Saved contacts are asked at their saved addresses whether they are broadcasting.
+    fn sync_lookup_contacts(&self) {
+        let ips = self
+            .contacts
+            .list()
+            .iter()
+            .flat_map(|c| c.addrs.iter().map(SocketAddr::ip))
+            .collect();
+        self.ctrl.set_lookup_contacts(ips);
+    }
+
+    /// The list shown, from both sources; `--watch` starts as soon as its broadcaster shows up.
+    fn refresh_peers(&mut self) {
+        self.peers = merge(&self.mdns_peers, &self.found_peers);
+        let wanted = self.autowatch.as_deref().and_then(|q| {
+            self.peers
+                .iter()
+                .find(|p| p.name.to_lowercase().contains(q))
+                .and_then(PeerTarget::from_peer)
+        });
+        if let Some(target) = wanted {
+            self.autowatch = None;
+            self.watch(target);
+        }
     }
 
     fn apply(&mut self, input: ViewerInput) {
@@ -352,17 +386,12 @@ impl App {
             match event {
                 Event::ViewerCount(n) => self.viewer_count = n,
                 Event::Peers(peers) => {
-                    self.peers = peers;
-                    let wanted = self.autowatch.as_deref().and_then(|q| {
-                        self.peers
-                            .iter()
-                            .find(|p| p.name.to_lowercase().contains(q))
-                            .and_then(PeerTarget::from_peer)
-                    });
-                    if let Some(target) = wanted {
-                        self.autowatch = None;
-                        self.watch(target);
-                    }
+                    self.mdns_peers = peers;
+                    self.refresh_peers();
+                }
+                Event::Found(peers) => {
+                    self.found_peers = peers;
+                    self.refresh_peers();
                 }
                 Event::BroadcastEnded { generation, end } => {
                     let current = self.ctrl.broadcast.as_ref().map(|b| b.generation);
@@ -778,6 +807,7 @@ impl App {
             if let Err(e) = self.contacts.save(&self.dir) {
                 tracing::warn!("could not save contacts: {e:#}");
             }
+            self.sync_lookup_contacts();
         }
         if let Some(target) = picked {
             self.watch(target);
@@ -1376,7 +1406,7 @@ impl App {
     }
 
     /// The theme, and what settings.toml holds that has no control elsewhere: the debug
-    /// figures, the broadcast port and where the mini player opens.
+    /// figures, the broadcast port, looking on Tailscale and where the mini player opens.
     fn settings_modal(&mut self, ctx: &egui::Context) {
         let station = theme::station(ctx.global_style().visuals.dark_mode);
         let width = (ctx.content_rect().width() - 96.0).clamp(300.0, 528.0);
@@ -1484,6 +1514,25 @@ impl App {
                         }
                     }
                 });
+                let mut tailscale = !self.settings.skip_tailscale;
+                if ui
+                    .checkbox(
+                        &mut tailscale,
+                        RichText::new("Find broadcasters on Tailscale").color(station.body),
+                    )
+                    .on_hover_text(format!(
+                        "Multicast doesn't cross a tailnet, so the network list can't see who \
+                         broadcasts there. Peeroxide asks the Tailscale app on this computer for \
+                         the tailnet's devices (also with Headscale) and asks each one, on UDP \
+                         port {LOOKUP_PORT}. Saved people are asked at their saved address \
+                         either way."
+                    ))
+                    .changed()
+                {
+                    self.settings.skip_tailscale = !tailscale;
+                    self.save_settings();
+                    self.ctrl.set_tailscale(tailscale);
+                }
                 ui.add_space(12.0);
                 section_label(ui, &station, "Mini player");
                 let placed = self.settings.mini_player.is_some();
