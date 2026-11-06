@@ -9,6 +9,14 @@ Requirements: Windows 10 version 2004 or newer, or Windows 11. No installation.
 Build: {commit}
 
 
+NEW IN 0.6.4
+------------
+- Fixes 0.6.3 closing right after "Checking for updates..." on PCs with
+  Franklin Gothic installed (it comes with Microsoft Office). 0.6.3
+  updates itself to 0.6.4 when you open it; if it still closes, download
+  0.6.4 by hand.
+
+
 NEW IN 0.6.3
 ------------
 - Tailscale and Headscale: people broadcasting on your tailnet show up in
